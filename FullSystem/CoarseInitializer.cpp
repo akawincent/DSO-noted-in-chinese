@@ -180,7 +180,7 @@ bool CoarseInitializer::trackFrame(FrameHessian* newFrameHessian, std::vector<IO
 		while(true)
 		{
 			Mat88f Hl = H;
-			//加入阻尼因子lamda = 0.1 就是LM法
+			//加入阻尼因子lamda = 0.1 就是LM法 (u*I + H)x = b
 			for(int i=0;i<8;i++) Hl(i,i) *= (1+lambda);
 			//Schur Complement
 			Hl -= Hsc*(1/(1+lambda));
@@ -619,6 +619,10 @@ Vec3f CoarseInitializer::calcResAndGS(
 	acc9.finish();      
 	/************************acc9矩阵的构成************************/
 	//x21是newFrame与firstFrame之间的变换参数 r21是两个point之间的光度误差
+	//note:acc9里面并没有加入误差对逆深度的导数！！！！
+	//acc9的优化更新量都是对帧而言的，而不带有描述landmark的参数(逆深度)
+	//这也是为什么acc9可以把每个点的对应导数直接相加而不需要考虑分别更新每个点的参数(深度)
+	//对应导数的累加代表了所有的point指导了x21的优化，而每个point逆深度的更新则交给了doStep函数
 	//Jx21*Jx21 (8*8)    Jx21^T*r21 (8*1)
 	//Jx21*r21  (1*8)     r21*r21   (1*1)
 
@@ -643,7 +647,8 @@ Vec3f CoarseInitializer::calcResAndGS(
 		}
 	}
 	EAlpha.finish();
-	//only one thing can be confirmed that idepth bigger,alphaEnergy bigger and 
+	//only one thing can be confirmed that idepth bigger,alphaEnergy bigger and translation bigger,alphaEnergy bigger
+	//（所有point的(idepth-1)^2累加 + 平移量*point个数） * 权重(alphaW = 150*150)
 	float alphaEnergy = alphaW*(EAlpha.A + refToNew.translation().squaredNorm() * npts);
 
 	//printf("AE = %f * %f + %f\n", alphaW, EAlpha.A, refToNew.translation().squaredNorm() * npts);
@@ -651,8 +656,10 @@ Vec3f CoarseInitializer::calcResAndGS(
 
 	// compute alpha opt.
 	float alphaOpt;
+	//alphaK = 2.5*2.5 这个变量有点像是alphaEnergy平均到每个point的一个阈值
 	if(alphaEnergy > alphaK*npts)
 	{
+		//超出阈值
 		alphaOpt = 0;
 		alphaEnergy = alphaK*npts;
 	}
@@ -674,6 +681,7 @@ Vec3f CoarseInitializer::calcResAndGS(
 		JbBuffer_new[i][8] += alphaOpt*(point->idepth_new - 1);
 		JbBuffer_new[i][9] += alphaOpt;
 
+		//平移过大
 		if(alphaOpt==0)
 		{
 			JbBuffer_new[i][8] += couplingWeight*(point->idepth_new - point->iR);
@@ -681,6 +689,7 @@ Vec3f CoarseInitializer::calcResAndGS(
 		}
 		//分母+1是防止分母过小导致系统不稳定
 		JbBuffer_new[i][9] = 1/(1+JbBuffer_new[i][9]);
+		//
 		acc9SC.updateSingleWeighted(
 				(float)JbBuffer_new[i][0],(float)JbBuffer_new[i][1],(float)JbBuffer_new[i][2],(float)JbBuffer_new[i][3],
 				(float)JbBuffer_new[i][4],(float)JbBuffer_new[i][5],(float)JbBuffer_new[i][6],(float)JbBuffer_new[i][7],
@@ -691,9 +700,13 @@ Vec3f CoarseInitializer::calcResAndGS(
 
 	//printf("nelements in H: %d, in E: %d, in Hsc: %d / 9!\n", (int)acc9.num, (int)E.num, (int)acc9SC.num*9);
 	//形参引用将计算出的H、b、Hsc、bsc传给实参
+	//Jx21^T * Jx21(8*8)
 	H_out = acc9.H.topLeftCorner<8,8>();// / acc9.num;
+	//Jx21^T * r21(8*1)
 	b_out = acc9.H.topRightCorner<8,1>();// / acc9.num;
+	//1/Jp*Jp^T *Jx21^T*Jp*Jp^T*Jx21 at(8*8)
 	H_out_sc = acc9SC.H.topLeftCorner<8,8>();// / acc9.num;
+	//1/Jp*Jp^T *Jx21^T*Jp*Jp^T*r21 at(8*!)
 	b_out_sc = acc9SC.H.topRightCorner<8,1>();// / acc9.num;
 
 	H_out(0,0) += alphaOpt*npts;
@@ -705,6 +718,9 @@ Vec3f CoarseInitializer::calcResAndGS(
 	b_out[1] += tlog[1]*alphaOpt*npts;
 	b_out[2] += tlog[2]*alphaOpt*npts;
 
+	//E.A = total energy 
+	//alphaEnergy = measure translation and idepth
+	//E.num = count of point
 	return Vec3f(E.A, alphaEnergy ,E.num);
 }
 

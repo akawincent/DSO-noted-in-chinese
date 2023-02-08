@@ -709,6 +709,7 @@ Vec3f CoarseInitializer::calcResAndGS(
 	//1/Jp*Jp^T *Jx21^T*Jp*Jp^T*r21 at(8*!)
 	b_out_sc = acc9SC.H.topRightCorner<8,1>();// / acc9.num;
 
+	//这些操作是为了干什么 控制位移更新量？
 	H_out(0,0) += alphaOpt*npts;
 	H_out(1,1) += alphaOpt*npts;
 	H_out(2,2) += alphaOpt*npts;

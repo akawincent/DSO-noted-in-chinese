@@ -100,7 +100,7 @@ bool CoarseInitializer::trackFrame(FrameHessian* newFrameHessian, std::vector<IO
         ow->pushLiveFrame(newFrameHessian);
 
 	int maxIterations[] = {5,5,10,30,50};
-
+	//能量项的权重
 	alphaK = 2.5*2.5;//*freeDebugParam1*freeDebugParam1;
 	alphaW = 150*150;//*freeDebugParam2*freeDebugParam2;
 	regWeight = 0.8;//*freeDebugParam4;
@@ -591,6 +591,7 @@ Vec3f CoarseInitializer::calcResAndGS(
 			//_mm_load_ps是取内存连续的4块地址中的数据
 			//第一次_mm_load_ps能导入一个point的dp + 0~3 4个邻域点
 			//第二次_mm_load_ps能导入一个point的dp + 4~7 剩下4个邻域点
+			//updateSSE计算每个point的Hessian矩阵 并且遍历它的8-pattern部分的Hessian进行累加
 			acc9.updateSSE(
 					//转换到float类型操作
 					_mm_load_ps(((float*)(&dp0))+i),	
@@ -617,7 +618,7 @@ Vec3f CoarseInitializer::calcResAndGS(
 	//完成J*J^T的计算 针对一个point的J为1*8的Jacobian 和一个1*1的residual
 	acc9.finish();      
 	/************************acc9矩阵的构成************************/
-	//x21是newFrame与firstFrame之间的变换参数 r21是两帧之间的误差
+	//x21是newFrame与firstFrame之间的变换参数 r21是两个point之间的光度误差
 	//Jx21*Jx21 (8*8)    Jx21^T*r21 (8*1)
 	//Jx21*r21  (1*8)     r21*r21   (1*1)
 
@@ -630,16 +631,19 @@ Vec3f CoarseInitializer::calcResAndGS(
 		Pnt* point = ptsl+i;
 		if(!point->isGood_new)
 		{
+			
 			E.updateSingle((float)(point->energy[1]));
 		}
 		else
 		{
-			//逆深度的L2损失？
+			//好点
+			//E and EAlpha are mixed ???
 			point->energy_new[1] = (point->idepth_new-1)*(point->idepth_new-1);
 			E.updateSingle((float)(point->energy_new[1]));
 		}
 	}
 	EAlpha.finish();
+	//only one thing can be confirmed that idepth bigger,alphaEnergy bigger and 
 	float alphaEnergy = alphaW*(EAlpha.A + refToNew.translation().squaredNorm() * npts);
 
 	//printf("AE = %f * %f + %f\n", alphaW, EAlpha.A, refToNew.translation().squaredNorm() * npts);
@@ -664,7 +668,7 @@ Vec3f CoarseInitializer::calcResAndGS(
 		Pnt* point = ptsl+i;
 		if(!point->isGood_new)
 			continue;
-
+		//Jp * Jp
 		point->lastHessian_new = JbBuffer_new[i][9];
 
 		JbBuffer_new[i][8] += alphaOpt*(point->idepth_new - 1);

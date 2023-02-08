@@ -1292,6 +1292,7 @@ public:
 
 
 private:
+  //16bit内存对齐 以便执行SSE指令
   EIGEN_ALIGN16 float SSEData[4*45];
   EIGEN_ALIGN16 float SSEData1k[4*45];
   EIGEN_ALIGN16 float SSEData1m[4*45];

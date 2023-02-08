@@ -151,7 +151,7 @@ bool CoarseInitializer::trackFrame(FrameHessian* newFrameHessian, std::vector<IO
 		resetPoints(lvl);
 		//计算得到当前层迭代优化前的总energy项以及H b Hsc bsc
 		Vec3f resOld = calcResAndGS(lvl, H, b, Hsc, bsc, refToNew_current, refToNew_aff_current, false);
-		//生效calcResAndGS中计算出来的新的优化信息 energy isGood lastHessian idepth等
+		//更新calcResAndGS中计算出来的新的优化信息 energy isGood lastHessian idepth等
 		applyStep(lvl);
 
 		float lambda = 0.1;
@@ -182,15 +182,16 @@ bool CoarseInitializer::trackFrame(FrameHessian* newFrameHessian, std::vector<IO
 			Mat88f Hl = H;
 			//加入阻尼因子lamda = 0.1 就是LM法 (u*I + H)x = b
 			for(int i=0;i<8;i++) Hl(i,i) *= (1+lambda);
-			//Schur Complement
+
+			/************************* Schur Complement **********************/
 			Hl -= Hsc*(1/(1+lambda));
 			Vec8f bl = b - bsc*(1/(1+lambda));
 
-			//why?
+			//note:why? 
 			Hl = wM * Hl * wM * (0.01f/(w[lvl]*h[lvl]));
 			bl = wM * bl * (0.01f/(w[lvl]*h[lvl]));
 
-			//求解增量
+			//求解增量(位姿增量和光度参数 没有逆深度的更新量)
 			Vec8f inc;
 			//初始化为true
 			if(fixAffine)
@@ -215,6 +216,7 @@ bool CoarseInitializer::trackFrame(FrameHessian* newFrameHessian, std::vector<IO
 			//状态变量更新后 再求一次更新后的总energy以及增量方程的H和b及其舒尔补
 			Mat88f H_new, Hsc_new; Vec8f b_new, bsc_new;
 			Vec3f resNew = calcResAndGS(lvl, H_new, b_new, Hsc_new, bsc_new, refToNew_new, refToNew_aff_new, false);
+			//又一个L2正则项？
 			Vec3f regEnergy = calcEC(lvl);
 
 			float eTotalNew = (resNew[0]+resNew[1]+regEnergy[1]);
@@ -242,7 +244,7 @@ bool CoarseInitializer::trackFrame(FrameHessian* newFrameHessian, std::vector<IO
 			//如果本次优化更新后的energy小于上一次计算出的energy 则接受本次优化 更新状态变量 
 			if(accept)
 			{
-
+				//位移足够大 snapped置为true
 				if(resNew[1] == alphaK*numPoints[lvl])
 					snapped = true;
 				H = H_new;
@@ -253,6 +255,7 @@ bool CoarseInitializer::trackFrame(FrameHessian* newFrameHessian, std::vector<IO
 				refToNew_aff_current = refToNew_aff_new;
 				refToNew_current = refToNew_new;
 				applyStep(lvl);
+				//将所有点的真实逆深度iR设置为其邻域(包括自己共10个idepth)逆深度的中位数
 				optReg(lvl);
 				lambda *= 0.5;		//降低阻尼因子 放慢优化的步伐
 				fails=0;
@@ -295,10 +298,11 @@ bool CoarseInitializer::trackFrame(FrameHessian* newFrameHessian, std::vector<IO
 	if(!snapped) snappedAt=0;
 
 	if(snapped && snappedAt==0)
+		//记录满足snapped时帧的编号	
 		snappedAt = frameID;
 
     debugPlot(0,wraps);
-
+	//snapped之后再优化五帧 这个函数就返回true 代表初始化成功！
 	return snapped && frameID > snappedAt+5;
 }
 
@@ -619,13 +623,13 @@ Vec3f CoarseInitializer::calcResAndGS(
 	acc9.finish();      
 	/************************acc9矩阵的构成************************/
 	//x21是newFrame与firstFrame之间的变换参数 r21是两个point之间的光度误差
-	//note:acc9里面并没有加入误差对逆深度的导数！！！！
-	//acc9的优化更新量都是对帧而言的，而不带有描述landmark的参数(逆深度)
-	//这也是为什么acc9可以把每个点的对应导数直接相加而不需要考虑分别更新每个点的参数(深度)
+	//note:acc9里面并没有加入误差对逆深度的导数！！！！acc9主要是构建了增量方程中的Hx21和Jx21*r21
 	//对应导数的累加代表了所有的point指导了x21的优化，而每个point逆深度的更新则交给了doStep函数
 	//Jx21*Jx21 (8*8)    Jx21^T*r21 (8*1)
 	//Jx21*r21  (1*8)     r21*r21   (1*1)
 
+
+    /***************加入L2正则项使得优化快速稳定 alphaEnergy便是L2正则项****************/
 	// calculate alpha energy, and decide if we cap it.
 	//11*11的矩阵？
 	Accumulator11 EAlpha;
@@ -635,7 +639,6 @@ Vec3f CoarseInitializer::calcResAndGS(
 		Pnt* point = ptsl+i;
 		if(!point->isGood_new)
 		{
-			
 			E.updateSingle((float)(point->energy[1]));
 		}
 		else
@@ -647,7 +650,6 @@ Vec3f CoarseInitializer::calcResAndGS(
 		}
 	}
 	EAlpha.finish();
-	//only one thing can be confirmed that idepth bigger,alphaEnergy bigger and translation bigger,alphaEnergy bigger
 	//（所有point的(idepth-1)^2累加 + 平移量*point个数） * 权重(alphaW = 150*150)
 	float alphaEnergy = alphaW*(EAlpha.A + refToNew.translation().squaredNorm() * npts);
 
@@ -657,14 +659,15 @@ Vec3f CoarseInitializer::calcResAndGS(
 	// compute alpha opt.
 	float alphaOpt;
 	//alphaK = 2.5*2.5 这个变量有点像是alphaEnergy平均到每个point的一个阈值
+	//L2正则项大小也有一个限度
 	if(alphaEnergy > alphaK*npts)
 	{
-		//超出阈值
+		//超出阈值 位移较大
 		alphaOpt = 0;
 		alphaEnergy = alphaK*npts;
 	}
 	else
-	{
+	{   //位移较小
 		alphaOpt = alphaW;
 	}
 
@@ -678,10 +681,11 @@ Vec3f CoarseInitializer::calcResAndGS(
 		//Jp * Jp
 		point->lastHessian_new = JbBuffer_new[i][9];
 
+		//位移较小，添加(dp-1)^2
 		JbBuffer_new[i][8] += alphaOpt*(point->idepth_new - 1);
 		JbBuffer_new[i][9] += alphaOpt;
 
-		//平移过大
+		//位移过大,添加(dp-diR)^2
 		if(alphaOpt==0)
 		{
 			JbBuffer_new[i][8] += couplingWeight*(point->idepth_new - point->iR);
@@ -689,14 +693,16 @@ Vec3f CoarseInitializer::calcResAndGS(
 		}
 		//分母+1是防止分母过小导致系统不稳定
 		JbBuffer_new[i][9] = 1/(1+JbBuffer_new[i][9]);
-		//
+		//这里是merge掉了逆深度
 		acc9SC.updateSingleWeighted(
 				(float)JbBuffer_new[i][0],(float)JbBuffer_new[i][1],(float)JbBuffer_new[i][2],(float)JbBuffer_new[i][3],
 				(float)JbBuffer_new[i][4],(float)JbBuffer_new[i][5],(float)JbBuffer_new[i][6],(float)JbBuffer_new[i][7],
 				(float)JbBuffer_new[i][8],(float)JbBuffer_new[i][9]);
 	}
 	acc9SC.finish();
-
+	/************************acc9SC矩阵的构成************************/
+	//1/Jp*Jp^T *Jx21^T*Jp*Jp^T*Jx21 (8*8)    1/Jp*Jp^T *Jx21^T*Jp*Jp^T*r21 (8*1)
+	//1/Jp*Jp^T *Jx21^T*Jp*Jp^T*r21  (1*8)              r21*r21             (1*1)
 
 	//printf("nelements in H: %d, in E: %d, in Hsc: %d / 9!\n", (int)acc9.num, (int)E.num, (int)acc9SC.num*9);
 	//形参引用将计算出的H、b、Hsc、bsc传给实参
@@ -704,12 +710,12 @@ Vec3f CoarseInitializer::calcResAndGS(
 	H_out = acc9.H.topLeftCorner<8,8>();// / acc9.num;
 	//Jx21^T * r21(8*1)
 	b_out = acc9.H.topRightCorner<8,1>();// / acc9.num;
-	//1/Jp*Jp^T *Jx21^T*Jp*Jp^T*Jx21 at(8*8)
+	//1/Jp*Jp^T *Jx21^T*Jp*Jp^T*Jx21(8*8)
 	H_out_sc = acc9SC.H.topLeftCorner<8,8>();// / acc9.num;
-	//1/Jp*Jp^T *Jx21^T*Jp*Jp^T*r21 at(8*!)
+	//1/Jp*Jp^T *Jx21^T*Jp*Jp^T*r21(8*1)
 	b_out_sc = acc9SC.H.topRightCorner<8,1>();// / acc9.num;
 
-	//这些操作是为了干什么 控制位移更新量？
+	//加入位移较小情况时的正则项
 	H_out(0,0) += alphaOpt*npts;
 	H_out(1,1) += alphaOpt*npts;
 	H_out(2,2) += alphaOpt*npts;
@@ -720,7 +726,7 @@ Vec3f CoarseInitializer::calcResAndGS(
 	b_out[2] += tlog[2]*alphaOpt*npts;
 
 	//E.A = total energy 
-	//alphaEnergy = measure translation and idepth
+	//alphaEnergy = L2-norm
 	//E.num = count of point
 	return Vec3f(E.A, alphaEnergy ,E.num);
 }
@@ -1071,20 +1077,24 @@ void CoarseInitializer::doStep(int lvl, float lambda, Vec8f inc)
 	{
 		if(!pts[i].isGood) continue;
 
-
+		//Schur Complement merge掉逆深度后求得inc再回求逆深度增量
 		float b = JbBuffer[i][8] + JbBuffer[i].head<8>().dot(inc);
+		//step就是逆深度的增量
+		//step = -1/Jp*Jp^T *(Jp^T*r21+Jx21*Jp*inc)
 		float step = - b * JbBuffer[i][9] / (1+lambda);
 
-
+		//限制step的大小
 		float maxstep = maxPixelStep*pts[i].maxstep;
 		if(maxstep > idMaxStep) maxstep=idMaxStep;
 
 		if(step >  maxstep) step = maxstep;
 		if(step < -maxstep) step = -maxstep;
 
+		//限制更新后深度大小
 		float newIdepth = pts[i].idepth + step;
 		if(newIdepth < 1e-3 ) newIdepth = 1e-3;
 		if(newIdepth > 50) newIdepth = 50;
+		//更新深度到idepth_new
 		pts[i].idepth_new = newIdepth;
 	}
 
@@ -1101,11 +1111,14 @@ void CoarseInitializer::applyStep(int lvl)
 			pts[i].idepth = pts[i].idepth_new = pts[i].iR;
 			continue;
 		}
+		//将calcResAndGS中计算出的energy_new isGood_new以及idepth_new生效保存到不带new的变量
 		pts[i].energy = pts[i].energy_new;
 		pts[i].isGood = pts[i].isGood_new;
+		//
 		pts[i].idepth = pts[i].idepth_new;
 		pts[i].lastHessian = pts[i].lastHessian_new;
 	}
+	//交换JbBuffer
 	std::swap<Vec10f*>(JbBuffer, JbBuffer_new);
 }
 

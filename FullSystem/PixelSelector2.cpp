@@ -366,7 +366,7 @@ Eigen::Vector3i PixelSelector::select(const FrameHessian* const fh,
 	float * mapmax1 = fh->absSquaredGrad[1];	//第1层图像的所有像素的梯度平方和
 	float * mapmax2 = fh->absSquaredGrad[2];	//第2层图像的所有像素的梯度平方和
 
-
+	//选第0层图像需要用到0 1 2层图像的梯度平方和，配合着不同的pot大小
 	int w = wG[0];
 	int w1 = wG[1];
 	int w2 = wG[2];

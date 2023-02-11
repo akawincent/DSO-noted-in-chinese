@@ -254,6 +254,7 @@ bool CoarseInitializer::trackFrame(FrameHessian* newFrameHessian, std::vector<IO
 				resOld = resNew;
 				refToNew_aff_current = refToNew_aff_new;
 				refToNew_current = refToNew_new;
+				//生效本次优化中的逆深度 是否为好点等信息
 				applyStep(lvl);
 				//将所有点的真实逆深度iR设置为其邻域(包括自己共10个idepth)逆深度的中位数
 				optReg(lvl);
@@ -1001,6 +1002,7 @@ void CoarseInitializer::setFirst(	CalibHessian* HCalib, FrameHessian* newFrameHe
 //				pl[nl].outlierTH = patternNum*gth*gth;
 //
 				//外点阈值 超过该阈值就判断为外点？
+				//outlierTH = 8* 12 * 12
 				pl[nl].outlierTH = patternNum*setting_outlierTH;
 
 				nl++;

@@ -49,18 +49,17 @@ PointHessian::PointHessian(const ImmaturePoint* const rawPoint, CalibHessian* Hc
 	//idepth_init = rawPoint->idepth_GT;
 
 	my_type = rawPoint->my_type;
-
+	//计算idepth和idepth_scaled
 	setIdepthScaled((rawPoint->idepth_max + rawPoint->idepth_min)*0.5);
+	//设置点的状态PtStatus
 	setPointStatus(PointHessian::INACTIVE);
 
 	int n = patternNum;
 	memcpy(color, rawPoint->color, sizeof(float)*n);
 	memcpy(weights, rawPoint->weights, sizeof(float)*n);
 	energyTH = rawPoint->energyTH;
-
+	//能量设为0
 	efPoint=0;
-
-
 }
 
 

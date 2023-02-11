@@ -175,7 +175,7 @@ namespace dso
 		inline AffLight aff_g2l_0() const { return AffLight(get_state_zero()[6] * SCALE_A, get_state_zero()[7] * SCALE_B); }
 
 		//设置FEJ点的状态增量
-		void setStateZero(const Vec10 &state_zero); //外部定义 到Fullsystem.cpp文件找
+		void setStateZero(const Vec10 &state_zero); //外部定义 到HessianBlocks.cpp文件找
 
 		//赋值增量state
 		inline void setState(const Vec10 &state)
@@ -406,28 +406,28 @@ namespace dso
 	struct PointHessian
 	{
 		EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
-		static int instanceCounter;
-		EFPoint *efPoint;
+		static int instanceCounter;	//实例计数器 实例一个对象后加1
+		EFPoint *efPoint;			//点的能量
 
 		// static values
 		float color[MAX_RES_PER_POINT];	  // colors in host frame
 		float weights[MAX_RES_PER_POINT]; // host-weights for respective residuals.
 
-		float u, v;
-		int idx;
-		float energyTH;
-		FrameHessian *host;
-		bool hasDepthPrior;
+		float u, v;					//point对应的像素点位置
+		int idx;					//编号
+		float energyTH;				//能量阈值
+		FrameHessian *host;			//对应的host Frame 这里就是FrameHessian和PointHessian互相持有对方
+		bool hasDepthPrior;			//初始化得到的点有深度先验，其他是没有先验的
 
-		float my_type;
+		float my_type;				//不同类型的点(不同的选点pot)
 
-		float idepth_scaled;
-		float idepth_zero_scaled;
-		float idepth_zero;
-		float idepth;
-		float step;
-		float step_backup;
-		float idepth_backup;
+		float idepth_scaled;		//成熟点的逆深度
+		float idepth_zero_scaled;	//FEJ使用, 点在host上x=0初始逆深度
+		float idepth_zero;			//缩放了scale倍的固定线性化点逆深度
+		float idepth;				//缩放scale倍的逆深度
+		float step;					//迭代优化每一步增量
+		float step_backup;			//迭代优化上一步增量的备份
+		float idepth_backup;		//上一次优化的逆深度值
 
 		float nullspaces_scale;
 		float idepth_hessian;

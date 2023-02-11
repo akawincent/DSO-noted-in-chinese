@@ -41,19 +41,19 @@ ImmaturePoint::ImmaturePoint(int u_, int v_, FrameHessian* host_, float type, Ca
 		int dy = patternP[idx][1];
 
         Vec3f ptc = getInterpolatedElement33BiLin(host->dI, u+dx, v+dy,wG[0]);
-
-
-
+		//拿到(u+dx,v+dy)处的像素灰度值
 		color[idx] = ptc[0];
+		//如果不合理 能量阈值置为无穷大
 		if(!std::isfinite(color[idx])) {energyTH=NAN; return;}
 
-
+		//累加梯度平方和
 		gradH += ptc.tail<2>()  * ptc.tail<2>().transpose();
-
+		//论文中的权重wp:gradient-dependent weighting 降低了高梯度像素的权重
 		weights[idx] = sqrtf(setting_outlierTHSumComponent / (setting_outlierTHSumComponent + ptc.tail<2>().squaredNorm()));
 	}
-
+	//energyTH = 8 * 12 * 12
 	energyTH = patternNum*setting_outlierTH;
+	//energyTH = energyTH * 1 *1
 	energyTH *= setting_overallEnergyTHWeight*setting_overallEnergyTHWeight;
 
 	idepth_GT=0;

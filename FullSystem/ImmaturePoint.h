@@ -49,26 +49,27 @@ enum ImmaturePointStatus {
 	IPS_OUTLIER,				// energy too high: if happens again: outlier!
 	IPS_SKIPPED,				// traced well and good (but not actually traced).
 	IPS_BADCONDITION,			// not traced because of bad condition.
-	IPS_UNINITIALIZED};			// not even traced once.
+	IPS_UNINITIALIZED			// not even traced once.
+};			
 
 
 class ImmaturePoint
 {
 public:
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
-	// static values
+	//static values
+	//MAX_RES_PER_POINT = 8
 	float color[MAX_RES_PER_POINT];
 	float weights[MAX_RES_PER_POINT];
-
-
-
-
-
+	
+	//点以及其邻域点的梯度平方和
 	Mat22f gradH;
 	Vec2f gradH_ev;
 	Mat22f gradH_eig;
 	float energyTH;
+	//像素坐标
 	float u,v;
+	//论文中的主导帧
 	FrameHessian* host;
 	int idxInImmaturePoints;
 
@@ -76,8 +77,10 @@ public:
 
 	float my_type;
 
+	//逆深度的上下限度
 	float idepth_min;
 	float idepth_max;
+
 	ImmaturePoint(int u_, int v_, FrameHessian* host_, float type, CalibHessian* HCalib);
 	~ImmaturePoint();
 
@@ -104,7 +107,7 @@ public:
 			ImmaturePointTemporaryResidual* tmpRes,
 			float idepth);
 
-private:
+	private:
 };
 
 }

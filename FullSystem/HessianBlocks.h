@@ -177,10 +177,9 @@ namespace dso
 		//设置FEJ点的状态增量
 		void setStateZero(const Vec10 &state_zero); //外部定义 到HessianBlocks.cpp文件找
 
-		//赋值增量state
+		//给state乘上尺度因子变为state_scaled
 		inline void setState(const Vec10 &state)
 		{
-
 			this->state = state;
 			// SE(3)平移量
 			state_scaled.segment<3>(0) = SCALE_XI_TRANS * state.segment<3>(0);
@@ -196,10 +195,11 @@ namespace dso
 			PRE_camToWorld = PRE_worldToCam.inverse();
 			// setCurrentNullspace();
 		};
-		//赋值恢复尺度后的增量state_scale
+
+		//去掉state_scaled的尺度因子变为state
 		inline void setStateScaled(const Vec10 &state_scaled)
 		{
-
+			//就是把state_scaled的尺度因子去掉赋给state
 			this->state_scaled = state_scaled;
 			state.segment<3>(0) = SCALE_XI_TRANS_INVERSE * state_scaled.segment<3>(0);
 			state.segment<3>(3) = SCALE_XI_ROT_INVERSE * state_scaled.segment<3>(3);
@@ -207,7 +207,7 @@ namespace dso
 			state[7] = SCALE_B_INVERSE * state_scaled[7];
 			state[8] = SCALE_A_INVERSE * state_scaled[8];
 			state[9] = SCALE_B_INVERSE * state_scaled[9];
-
+			//PRE_worldToCam = 相机姿态的左乘微小量 * 相机姿态状态量
 			PRE_worldToCam = SE3::exp(w2c_leftEps()) * get_worldToCam_evalPT();
 			PRE_camToWorld = PRE_worldToCam.inverse();
 			// setCurrentNullspace();
@@ -225,11 +225,14 @@ namespace dso
 		//同上 是恢复尺度后的状态量
 		inline void setEvalPT_scaled(const SE3 &worldToCam_evalPT, const AffLight &aff_g2l)
 		{
+			//10维的状态变量
 			Vec10 initial_state = Vec10::Zero();
+			//把光度参数加进去
 			initial_state[6] = aff_g2l.a;
 			initial_state[7] = aff_g2l.b;
 			this->worldToCam_evalPT = worldToCam_evalPT;
 			setStateScaled(initial_state);
+			//设置FEJ点的状态增量 计算零空间
 			setStateZero(this->get_state());
 		};
 

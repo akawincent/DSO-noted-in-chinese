@@ -37,9 +37,11 @@
 namespace dso
 {
 
-
+//是否设置了状态伴随矩阵 在serAdjoints()中设置为true
 bool EFAdjointsValid = false;
+//是否设置frame point还有residual的ID
 bool EFIndicesValid = false;
+//是否设置状态增量值
 bool EFDeltaValid = false;
 
 
@@ -48,15 +50,18 @@ void EnergyFunctional::setAdjointsF(CalibHessian* Hcalib)
 
 	if(adHost != 0) delete[] adHost;
 	if(adTarget != 0) delete[] adTarget;
+	//创建主帧
 	adHost = new Mat88[nFrames*nFrames];
+	//创建目标帧
 	adTarget = new Mat88[nFrames*nFrames];
 
-	for(int h=0;h<nFrames;h++)
-		for(int t=0;t<nFrames;t++)
+	for(int h=0;h<nFrames;h++)		//遍历主帧
+		for(int t=0;t<nFrames;t++)	//遍历目标帧
 		{
+			//EFrame->data中保存的是FrameHessian信息
 			FrameHessian* host = frames[h]->data;
 			FrameHessian* target = frames[t]->data;
-
+			//得到从host到target之间的相对位姿
 			SE3 hostToTarget = target->get_worldToCam_evalPT() * host->get_worldToCam_evalPT().inverse();
 
 			Mat88 AH = Mat88::Identity();
@@ -426,13 +431,19 @@ EFResidual* EnergyFunctional::insertResidual(PointFrameResidual* r)
 	r->efResidual = efr;
 	return efr;
 }
+
+
 EFFrame* EnergyFunctional::insertFrame(FrameHessian* fh, CalibHessian* Hcalib)
 {
+	//创建当前帧的EFFrame类的对象eff，此时eff->data保存着fh的信息
 	EFFrame* eff = new EFFrame(fh);
+	//给eff一个索引
 	eff->idx = frames.size();
+	//把eff存在容器frames里
 	frames.push_back(eff);
-
+	//EnergyFunctional中的成员变量nFrames加1
 	nFrames++;
+	//eff传给FrameHessian类中的efFrame变量，建立当前帧与eff之间的关联
 	fh->efFrame = eff;
 
 	assert(HM.cols() == 8*nFrames+CPARS-8);
@@ -446,7 +457,9 @@ EFFrame* EnergyFunctional::insertFrame(FrameHessian* fh, CalibHessian* Hcalib)
 	EFAdjointsValid=false;
 	EFDeltaValid=false;
 
+	//建立两帧之间的相对状态对主导帧和目标帧的状态的求导 后端窗口滑动优化中用到
 	setAdjointsF(Hcalib);
+	//
 	makeIDX();
 
 
@@ -461,10 +474,13 @@ EFFrame* EnergyFunctional::insertFrame(FrameHessian* fh, CalibHessian* Hcalib)
 }
 EFPoint* EnergyFunctional::insertPoint(PointHessian* ph)
 {
+	//创建EFPoint类efp对象(点ph，点ph的host Frame的EFFrame数据)
 	EFPoint* efp = new EFPoint(ph, ph->host->efFrame);
+	//给点编号
 	efp->idxInPoints = ph->host->efFrame->points.size();
+	//把点存在主帧EFFrame数据中的points容器
 	ph->host->efFrame->points.push_back(efp);
-
+	//记录点的数量
 	nPoints++;
 	ph->efPoint = efp;
 
@@ -920,8 +936,10 @@ void EnergyFunctional::makeIDX()
 
 	for(EFFrame* f : frames)
 		for(EFPoint* p : f->points)
-		{
+		{	
+			//将点加入到allPoints容器中
 			allPoints.push_back(p);
+			//建立residual的主导帧id和目标帧id
 			for(EFResidual* r : p->residualsAll)
 			{
 				r->hostIDX = r->host->idx;
@@ -929,7 +947,7 @@ void EnergyFunctional::makeIDX()
 			}
 		}
 
-
+	//设置了frame point以及residual的id
 	EFIndicesValid=true;
 }
 

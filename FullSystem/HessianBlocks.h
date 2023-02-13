@@ -231,6 +231,7 @@ namespace dso
 			initial_state[6] = aff_g2l.a;
 			initial_state[7] = aff_g2l.b;
 			this->worldToCam_evalPT = worldToCam_evalPT;
+			//去掉state_scaled的尺度因子变为state
 			setStateScaled(initial_state);
 			//设置FEJ点的状态增量 计算零空间
 			setStateZero(this->get_state());

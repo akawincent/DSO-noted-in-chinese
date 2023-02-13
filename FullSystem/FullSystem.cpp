@@ -833,18 +833,19 @@ void FullSystem::addActiveFrame( ImageAndExposure* image, int id )
 	/****************未初始化则执行初始化流程*********************/
 	if(!initialized)
 	{
-		/***************对第一帧图像进行初始化******************/
+		/***************对第一帧图像进行选点******************/
 		//coarseInitializer初始化时 其中的frameID成员变量为-1
 		if(coarseInitializer->frameID<0)	// first frame set. fh is kept by coarseInitializer.
 		{
 			//第一帧图像的fh送入setFirst选取三维点point并初始化
 			coarseInitializer->setFirst(&Hcalib, fh);
+			//此时frameID = 0
 		}
-		/***************对第二帧图像进行初始化******************/
-		//此时frameID = 0
-		else if(coarseInitializer->trackFrame(fh, outputWrapper))	// if SNAPPED
+		/***************对后面的新帧进行跟踪******************/
+		else if(coarseInitializer->trackFrame(fh, outputWrapper))	//initial conditions are satisfied
 		{
-			//为第一帧生成pointHessian，这些成熟点是经过track后计算出逆深度的
+			//为第一帧初始化生成pointHessian，这些成熟点是经过track后计算出逆深度的
+			//同时还将第一帧以及激活点送入了后端优化
 			initializeFromInitializer(fh);
 			lock.unlock();
 			//FullSystem::deliverTrackedFrame 的作用就是实现多线程的数据输入 最终送入makeKeyFrame
@@ -914,6 +915,7 @@ void FullSystem::addActiveFrame( ImageAndExposure* image, int id )
 		return;
 	}
 }
+
 void FullSystem::deliverTrackedFrame(FrameHessian* fh, bool needKF)
 {
 
@@ -1208,28 +1210,42 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 
 }
 
-
+/*************************** DSO系统的初始化操作 **************************/
+/* 	parameters:
+		newFrame ——————> CoarseInitializer::trackFrame成功时进来的新帧
+	note:
+		虽然trackFrame中对金字塔每一层lvl的points的idepth都进行优化，但在加为关键点时，只用到了lvl=0层的points!
+*/
 void FullSystem::initializeFromInitializer(FrameHessian* newFrame)
 {
 	boost::unique_lock<boost::mutex> lock(mapMutex);
 
 	// add firstframe.
 	FrameHessian* firstFrame = coarseInitializer->firstFrame;
-	firstFrame->idx = frameHessians.size();
+	//frameHessians是一个FrameHessian类型的Vector变量 存帧的信息 在Fullsystem.h中被定义
+	firstFrame->idx = frameHessians.size(); //firstFrame的idx是0
+	//把fisrtFrame压入frameHessians
 	frameHessians.push_back(firstFrame);
+	//这里的frameID是FrameHessian数据结构中的 并不是CoarseInitializer中的frameID
 	firstFrame->frameID = allKeyFramesHistory.size();
+	//frameHessians是一个FrameShell类型的Vector变量 存帧的关键信息 在Fullsystem.h中被定义
 	allKeyFramesHistory.push_back(firstFrame->shell);
+	//把第一帧加入后端优化
+	//ef在实例化Fullsystem时就完成了实例化
 	ef->insertFrame(firstFrame, &Hcalib);
 	setPrecalcValues();
 
 	//int numPointsTotal = makePixelStatus(firstFrame->dI, selectionMap, wG[0], hG[0], setting_desiredDensity);
 	//int numPointsTotal = pixelSelector->makeMaps(firstFrame->dIp, selectionMap,setting_desiredDensity);
 
+
+	//pointHessians是在FrameHessian中定义的std::vector<PointHessian *>
+	//只给pointHessians分配存储图像1/5数量的点的内存
 	firstFrame->pointHessians.reserve(wG[0]*hG[0]*0.2f);
 	firstFrame->pointHessiansMarginalized.reserve(wG[0]*hG[0]*0.2f);
 	firstFrame->pointHessiansOut.reserve(wG[0]*hG[0]*0.2f);
 
-
+	//计算一个因子rescaleFactor = firstFrame第0层图像被选中point数量/firstFrame第0层图像被选中point的逆深度之和
 	float sumID=1e-5, numID=1e-5;
 	for(int i=0;i<coarseInitializer->numPoints[0];i++)
 	{
@@ -1239,43 +1255,53 @@ void FullSystem::initializeFromInitializer(FrameHessian* newFrame)
 	float rescaleFactor = 1 / (sumID / numID);
 
 	// randomly sub-select the points I need.
+	//setting_desiredPointDensity = 2000
+	//keepPercentage = 2000/firstFrame第0层图像被选中point数量
 	float keepPercentage = setting_desiredPointDensity / coarseInitializer->numPoints[0];
 
     if(!setting_debugout_runquiet)
         printf("Initialization: keep %.1f%% (need %d, have %d)!\n", 100*keepPercentage,
                 (int)(setting_desiredPointDensity), coarseInitializer->numPoints[0] );
 
+	/******* 虽然trackFrame中对金字塔每一层lvl的points的idepth都进行优化，但在加为关键点时，只用到了lvl=0层的points! *******/
+	/******* trackFrame用到多层图像其目的是为了优化的准确性 *******/
 	for(int i=0;i<coarseInitializer->numPoints[0];i++)
 	{
+		//rand()产生最大的数是0x7fff 通过keepPercentage可以设定第一帧保持的点的数量
 		if(rand()/(float)RAND_MAX > keepPercentage) continue;
 
+		//创建未成熟点pt
 		Pnt* point = coarseInitializer->points[0]+i;
 		ImmaturePoint* pt = new ImmaturePoint(point->u+0.5f,point->v+0.5f,firstFrame,point->my_type, &Hcalib);
-
+		//能量阈值置为无穷大 不要这个点 其实就是在初始化ImmaturePoint时有像素灰度值不合理的点 就不要了
 		if(!std::isfinite(pt->energyTH)) { delete pt; continue; }
-
-
 		pt->idepth_max=pt->idepth_min=1;
+		//把immaturpoint pt转化为成熟点ph，创建PointHessian类型
 		PointHessian* ph = new PointHessian(pt, &Hcalib);
+		//建完了ph就删了pt
 		delete pt;
 		if(!std::isfinite(ph->energyTH)) {delete ph; continue;}
-
+		//计算idepth_scaled idepth
 		ph->setIdepthScaled(point->iR*rescaleFactor);
+		//计算idepth_zero idepth_zero_scaled nullspaces_scale
 		ph->setIdepthZero(ph->idepth);
+		//初始化时是有先验深度的
 		ph->hasDepthPrior=true;
+		//激活ph点
 		ph->setPointStatus(PointHessian::ACTIVE);
-
+		//把ph放入容器pointHessians中
 		firstFrame->pointHessians.push_back(ph);
+		//把第一帧上的激活点ph加入后端优化中
 		ef->insertPoint(ph);
 	}
 
-
-
+	//firstToNew拿到了trackFrame中优化计算出来的位姿
 	SE3 firstToNew = coarseInitializer->thisToNext;
+	//对平移部分缩放尺度因子rescaleFactor
 	firstToNew.translation() /= rescaleFactor;
 
-
 	// really no lock required, as we are initializing.
+	//设置fisrtFrame和newFrame的关键信息 存在shell里
 	{
 		boost::unique_lock<boost::mutex> crlock(shellPoseMutex);
 		firstFrame->shell->camToWorld = SE3();
@@ -1283,15 +1309,15 @@ void FullSystem::initializeFromInitializer(FrameHessian* newFrame)
 		firstFrame->setEvalPT_scaled(firstFrame->shell->camToWorld.inverse(),firstFrame->shell->aff_g2l);
 		firstFrame->shell->trackingRef=0;
 		firstFrame->shell->camToTrackingRef = SE3();
-
 		newFrame->shell->camToWorld = firstToNew.inverse();
 		newFrame->shell->aff_g2l = AffLight(0,0);
 		newFrame->setEvalPT_scaled(newFrame->shell->camToWorld.inverse(),newFrame->shell->aff_g2l);
+		//newFrame在track时的参考帧为fisrtFrame
 		newFrame->shell->trackingRef = firstFrame->shell;
+		//newFrame到它的参考帧fisrtFrame之间的位姿  
 		newFrame->shell->camToTrackingRef = firstToNew.inverse();
-
 	}
-
+	//标志初始化阶段完成
 	initialized=true;
 	printf("INITIALIZE FROM INITIALIZER (%d pts)!\n", (int)firstFrame->pointHessians.size());
 }

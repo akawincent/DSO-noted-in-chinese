@@ -420,7 +420,8 @@ double EnergyFunctional::calcLEnergyF_MT()
 
 
 EFResidual* EnergyFunctional::insertResidual(PointFrameResidual* r)
-{
+{	
+	//每个残差对应一个efr 包含残差 点 主导帧 目标帧
 	EFResidual* efr = new EFResidual(r, r->point->efPoint, r->host->efFrame, r->target->efFrame);
 	efr->idxInAll = r->point->efPoint->residualsAll.size();
 	r->point->efPoint->residualsAll.push_back(efr);

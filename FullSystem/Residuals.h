@@ -42,8 +42,9 @@ class CalibHessian;
 
 class EFResidual;
 
-
+//枚举优化状态变量的类型:激活 FEJ固定点 边缘化
 enum ResLocation {ACTIVE=0, LINEARIZED, MARGINALIZED, NONE};
+//point的枚举类型:好点 OOB OUTLIER
 enum ResState {IN=0, OOB, OUTLIER};
 
 struct FullJacRowT
@@ -51,34 +52,37 @@ struct FullJacRowT
 	Eigen::Vector2f projectedTo[MAX_RES_PER_POINT];
 };
 
+/********************* 关键帧优化中的残差类 ****************************/
 class PointFrameResidual
 {
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
+	//存着EFResidual对象
 	EFResidual* efResidual;
-
+	//实例化计数器
 	static int instanceCounter;
-
-
-	ResState state_state;
-	double state_energy;
+	//优化中当前状态量和更新后状态量的类型
 	ResState state_NewState;
+	ResState state_state;
+	//优化中的能量值
+	double state_energy;
 	double state_NewEnergy;
 	double state_NewEnergyWithOutlier;
 
-
+	//设置状态量的类型
 	void setState(ResState s) {state_state = s;}
 
-
+	//持有激活点
 	PointHessian* point;
+	//持有构成该残差的主导帧
 	FrameHessian* host;
+	//持有构成该残差的目标帧
 	FrameHessian* target;
+	//优化用到导数都存在J里
 	RawResidualJacobian* J;
 
-
 	bool isNew;
-
 
 	Eigen::Vector2f projectedTo[MAX_RES_PER_POINT];
 	Vec3f centerProjectedTo;
@@ -88,12 +92,14 @@ public:
 	PointFrameResidual(PointHessian* point_, FrameHessian* host_, FrameHessian* target_);
 	double linearize(CalibHessian* HCalib);
 
-
+	//重置状态量
 	void resetOOB()
-	{
+	{	
+		//能量设为0
 		state_NewEnergy = state_energy = 0;
+		//状态量更新值设为OUTLIER
 		state_NewState = ResState::OUTLIER;
-
+		//当前状态量设为好点
 		setState(ResState::IN);
 	};
 	void applyRes( bool copyJacobians);

@@ -1,3 +1,11 @@
+/*
+ * @Author: akawincent 3511606256@qq.com
+ * @Date: 2023-02-08 09:49:36
+ * @LastEditors: akawincent 3511606256@qq.com
+ * @LastEditTime: 2023-02-20 20:49:43
+ * @FilePath: \DSO github\DSO-noted-in-chinese\FullSystem\ResidualProjections.h
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 /**
 * This file is part of DSO.
 * 
@@ -57,7 +65,7 @@ EIGEN_STRONG_INLINE bool projectPoint(
 }
 
 
-
+/****************** 投影过程函数 *************************/
 EIGEN_STRONG_INLINE bool projectPoint(
 		const float &u_pt,const float &v_pt,
 		const float &idepth,
@@ -67,20 +75,26 @@ EIGEN_STRONG_INLINE bool projectPoint(
 		float &drescale, float &u, float &v,
 		float &Ku, float &Kv, Vec3f &KliP, float &new_idepth)
 {
+	//x1的归一化坐标 还不是像素坐标
 	KliP = Vec3f(
 			(u_pt+dx-HCalib->cxl())*HCalib->fxli(),
 			(v_pt+dy-HCalib->cyl())*HCalib->fyli(),
 			1);
-
+	//p2^-1 * p1 * K^-1 * x2
 	Vec3f ptp = R * KliP + t*idepth;
+	//p2 * p1^-1
 	drescale = 1.0f/ptp[2];
+	//p2
 	new_idepth = idepth*drescale;
 
 	if(!(drescale>0)) return false;
-
+	//x2的归一化横坐标
 	u = ptp[0] * drescale;
+	//x2的归一化纵坐标
 	v = ptp[1] * drescale;
+	//x2的像素横坐标
 	Ku = u*HCalib->fxl() + HCalib->cxl();
+	//x2的像素纵坐标
 	Kv = v*HCalib->fyl() + HCalib->cyl();
 
 	return Ku>1.1f && Kv>1.1f && Ku<wM3G && Kv<hM3G;

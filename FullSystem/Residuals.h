@@ -84,7 +84,9 @@ public:
 
 	bool isNew;
 
+	//host帧上的8-pattern邻域点投影到target帧上后的像素坐标
 	Eigen::Vector2f projectedTo[MAX_RES_PER_POINT];
+	//host帧上的点投影到target帧上后的像素坐标以及相对于target帧上的逆深度
 	Vec3f centerProjectedTo;
 
 	~PointFrameResidual();

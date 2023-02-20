@@ -68,6 +68,7 @@ namespace dso
 #define SCALE_A_INVERSE (1.0f / SCALE_A)
 #define SCALE_B_INVERSE (1.0f / SCALE_B)
 
+	/****************** 存储了host帧与target帧之间预先计算的值 *******************/
 	struct FrameFramePrecalc
 	{
 		EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
@@ -88,7 +89,7 @@ namespace dso
 		Vec3f PRE_tTll;
 		Vec3f PRE_KtTll;
 		Vec3f PRE_tTll_0;
-
+		//两帧之间的距离  用于判断是否边缘化
 		float distanceLL;
 
 		inline ~FrameFramePrecalc() {}

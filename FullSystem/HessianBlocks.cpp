@@ -55,6 +55,7 @@ PointHessian::PointHessian(const ImmaturePoint* const rawPoint, CalibHessian* Hc
 	setPointStatus(PointHessian::INACTIVE);
 
 	int n = patternNum;
+	//把immature point初始化时计算出来的像素灰度 以及灰度权重wp都传给pointHessian
 	memcpy(color, rawPoint->color, sizeof(float)*n);
 	memcpy(weights, rawPoint->weights, sizeof(float)*n);
 	energyTH = rawPoint->energyTH;

@@ -35,7 +35,7 @@
 namespace dso
 {
 
-
+/******************* 计算JpJdF（和FEJ有关） ********************/
 void EFResidual::takeDataF()
 {
 	std::swap<RawResidualJacobian*>(J, data->J);
@@ -44,7 +44,7 @@ void EFResidual::takeDataF()
 
 	for(int i=0;i<6;i++)
 		JpJdF[i] = J->Jpdxi[0][i]*JI_JI_Jd[0] + J->Jpdxi[1][i] * JI_JI_Jd[1];
-
+	//8x1的向量 前6x1为 dr21/dT21 * dr21/dp1  前2x1为 dr21/dT21 * dr21/dp1
 	JpJdF.segment<2>(6) = J->JabJIdx*J->Jpdd;
 }
 

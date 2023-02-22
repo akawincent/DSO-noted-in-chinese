@@ -58,6 +58,7 @@ PointFrameResidual::PointFrameResidual(){assert(false); instanceCounter++;}
 
 PointFrameResidual::~PointFrameResidual(){assert(efResidual==0); instanceCounter--; delete J;}
 
+//PointFrameResidual初始化
 PointFrameResidual::PointFrameResidual(PointHessian* point_, FrameHessian* host_, FrameHessian* target_) :
 	point(point_),
 	host(host_),
@@ -66,60 +67,63 @@ PointFrameResidual::PointFrameResidual(PointHessian* point_, FrameHessian* host_
 	efResidual=0;
 	instanceCounter++;
 	resetOOB();
+	//准备导数
 	J = new RawResidualJacobian();
 	assert(((long)J)%16==0);
 
 	isNew=true;
 }
 
-
-
-
+/****************** 准备后端优化中使用的导数 *******************/
 double PointFrameResidual::linearize(CalibHessian* HCalib)
 {
 	state_NewEnergyWithOutlier=-1;
-
+	//残差当前状态为OOB 把新状态也设为OOB  直接返回当前状态的能量
 	if(state_state == ResState::OOB)
 		{ state_NewState = ResState::OOB; return state_energy; }
 
+	//拿到这个残差对应的host和target帧之间的预先计算值
 	FrameFramePrecalc* precalc = &(host->targetPrecalc[target->idx]);
-	float energyLeft=0;
-	const Eigen::Vector3f* dIl = target->dI;
-	//const float* const Il = target->I;
-	const Mat33f &PRE_KRKiTll = precalc->PRE_KRKiTll;
-	const Vec3f &PRE_KtTll = precalc->PRE_KtTll;
-	const Mat33f &PRE_RTll_0 = precalc->PRE_RTll_0;
-	const Vec3f &PRE_tTll_0 = precalc->PRE_tTll_0;
-	const float * const color = point->color;
-	const float * const weights = point->weights;
 
-	Vec2f affLL = precalc->PRE_aff_mode;
-	float b0 = precalc->PRE_b0_mode;
+	float energyLeft=0;
+	
+	const Eigen::Vector3f* dIl = target->dI;				//目标帧的像素信息
+	//const float* const Il = target->I;
+	const Mat33f &PRE_KRKiTll = precalc->PRE_KRKiTll;		//K*旋转*K^-1
+	const Vec3f &PRE_KtTll = precalc->PRE_KtTll;			//K*平移
+	const Mat33f &PRE_RTll_0 = precalc->PRE_RTll_0;			//旋转部分(原始的位姿变换)	
+	const Vec3f &PRE_tTll_0 = precalc->PRE_tTll_0;			//平移部分(原始的位姿变换)
+	const float * const color = point->color;				//像素灰度值
+	const float * const weights = point->weights;			//像素的权重
+
+	Vec2f affLL = precalc->PRE_aff_mode;					//相对灰度变换
+	float b0 = precalc->PRE_b0_mode;						//光度参数b
 
 
 	Vec6f d_xi_x, d_xi_y;
 	Vec4f d_C_x, d_C_y;
 	float d_d_x, d_d_y;
+	//里面一系列的SCALE因子是干什么的
 	{
 		float drescale, u, v, new_idepth;
 		float Ku, Kv;
 		Vec3f KliP;
 
+		//如果从host到target的投影不成功  就把该residual设为OOB 直接返回他的能量
 		if(!projectPoint(point->u, point->v, point->idepth_zero_scaled, 0, 0,HCalib,
 				PRE_RTll_0,PRE_tTll_0, drescale, u, v, Ku, Kv, KliP, new_idepth))
 			{ state_NewState = ResState::OOB; return state_energy; }
-
+		//(point在target帧上的像素横坐标,point在target帧上的像素纵坐标,point相对于target帧上的逆深度)
 		centerProjectedTo = Vec3f(Ku, Kv, new_idepth);
 
-
+		/*********** 所有的导数的数学推导参考:https://www.cnblogs.com/JingeTU/p/8395046.html *************/
 		// diff d_idepth
+		//dx2/dp1
 		d_d_x = drescale * (PRE_tTll_0[0]-PRE_tTll_0[2]*u)*SCALE_IDEPTH*HCalib->fxl();
 		d_d_y = drescale * (PRE_tTll_0[1]-PRE_tTll_0[2]*v)*SCALE_IDEPTH*HCalib->fyl();
 
-
-
-
 		// diff calib
+		//dx2/dC  这里的C是相机内参矩阵
 		d_C_x[2] = drescale*(PRE_RTll_0(2,0)*u-PRE_RTll_0(0,0));
 		d_C_x[3] = HCalib->fxl() * drescale*(PRE_RTll_0(2,1)*u-PRE_RTll_0(0,1)) * HCalib->fyli();
 		d_C_x[0] = KliP[0]*d_C_x[2];
@@ -140,7 +144,7 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 		d_C_y[2] *= SCALE_C;
 		d_C_y[3] = (d_C_y[3]+1)*SCALE_C;
 
-
+		//dx2/dT21(T是李代数)
 		d_xi_x[0] = new_idepth*HCalib->fxl();
 		d_xi_x[1] = 0;
 		d_xi_x[2] = -new_idepth*u*HCalib->fxl();
@@ -156,7 +160,7 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 		d_xi_y[5] = u*HCalib->fyl();
 	}
 
-
+	//把上述计算结果赋给J
 	{
 		J->Jpdxi[0] = d_xi_x;
 		J->Jpdxi[1] = d_xi_y;
@@ -169,17 +173,12 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 
 	}
 
-
-
-
-
-
 	float JIdxJIdx_00=0, JIdxJIdx_11=0, JIdxJIdx_10=0;
 	float JabJIdx_00=0, JabJIdx_01=0, JabJIdx_10=0, JabJIdx_11=0;
 	float JabJab_00=0, JabJab_01=0, JabJab_11=0;
 
 	float wJI2_sum = 0;
-
+	//考虑8-pattern邻域
 	for(int idx=0;idx<patternNum;idx++)
 	{
 		float Ku, Kv;
@@ -189,23 +188,22 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 		projectedTo[idx][0] = Ku;
 		projectedTo[idx][1] = Kv;
 
-
+		//计算residual的数值
         Vec3f hitColor = (getInterpolatedElement33(dIl, Ku, Kv, wG[0]));
         float residual = hitColor[0] - (float)(affLL[0] * color[idx] + affLL[1]);
-
 
 
 		float drdA = (color[idx]-b0);
 		if(!std::isfinite((float)hitColor[0]))
 		{ state_NewState = ResState::OOB; return state_energy; }
 
-
+		//邻域点的权重
 		float w = sqrtf(setting_outlierTHSumComponent / (setting_outlierTHSumComponent + hitColor.tail<2>().squaredNorm()));
         w = 0.5f*(w + weights[idx]);
 
-
-
+		//Huber鲁棒核函数
 		float hw = fabsf(residual) < setting_huberTH ? 1 : setting_huberTH / fabsf(residual);
+		//能量
 		energyLeft += w*w*hw *residual*residual*(2-hw);
 
 		{
@@ -214,11 +212,12 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 
 			hitColor[1]*=hw;
 			hitColor[2]*=hw;
-
+			//r21  这里是经过 hw加权的
 			J->resF[idx] = residual*hw;
-
+			//JIdx = dr21/dx2 = wh * [gx gy] 
 			J->JIdx[0][idx] = hitColor[1];
 			J->JIdx[1][idx] = hitColor[2];
+			//JabF[0] = dr21/da21 JabF[1] = dr21/db21
 			J->JabF[0][idx] = drdA*hw;
 			J->JabF[1][idx] = hw;
 
@@ -240,10 +239,9 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 
 			if(setting_affineOptModeA < 0) J->JabF[0][idx]=0;
 			if(setting_affineOptModeB < 0) J->JabF[1][idx]=0;
-
 		}
 	}
-
+	//给Hessian矩阵做准备
 	J->JIdx2(0,0) = JIdxJIdx_00;
 	J->JIdx2(0,1) = JIdxJIdx_10;
 	J->JIdx2(1,0) = JIdxJIdx_10;
@@ -259,6 +257,7 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 
 	state_NewEnergyWithOutlier = energyLeft;
 
+	//能量太大了 就不要了
 	if(energyLeft > std::max<float>(host->frameEnergyTH, target->frameEnergyTH) || wJI2_sum < 2)
 	{
 		energyLeft = std::max<float>(host->frameEnergyTH, target->frameEnergyTH);
@@ -270,6 +269,7 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 	}
 
 	state_NewEnergy = energyLeft;
+	//返回这个r的能量
 	return energyLeft;
 }
 
@@ -312,6 +312,7 @@ void PointFrameResidual::applyRes(bool copyJacobians)
 			assert(!efResidual->isActiveAndIsGoodNEW);
 			return;	// can never go back from OOB
 		}
+		//好的残差 就把efResidual的is设为true 并调用takeDataF
 		if(state_NewState == ResState::IN)// && )
 		{
 			efResidual->isActiveAndIsGoodNEW=true;
@@ -322,8 +323,9 @@ void PointFrameResidual::applyRes(bool copyJacobians)
 			efResidual->isActiveAndIsGoodNEW=false;
 		}
 	}
-
+	//state_state = state_NewState
 	setState(state_NewState);
+	//能量也更新一下
 	state_energy = state_NewEnergy;
 }
 }

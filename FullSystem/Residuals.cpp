@@ -178,7 +178,7 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 	float JabJab_00=0, JabJab_01=0, JabJab_11=0;
 
 	float wJI2_sum = 0;
-	//考虑8-pattern邻域
+	//考虑8-pattern邻域 构建残差
 	for(int idx=0;idx<patternNum;idx++)
 	{
 		float Ku, Kv;

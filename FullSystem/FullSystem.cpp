@@ -849,6 +849,7 @@ void FullSystem::addActiveFrame( ImageAndExposure* image, int id )
 			initializeFromInitializer(fh);
 			lock.unlock();
 			//FullSystem::deliverTrackedFrame 的作用就是实现多线程的数据输入 最终送入makeKeyFrame
+			//参数true设定了要把fh设置成Key Frame
 			deliverTrackedFrame(fh, true);
 		}
 		/*******************初始化失败*****************/
@@ -901,14 +902,8 @@ void FullSystem::addActiveFrame( ImageAndExposure* image, int id )
 
 		}
 
-
-
-
         for(IOWrap::Output3DWrapper* ow : outputWrapper)
             ow->publishCamPose(fh->shell, &Hcalib);
-
-
-
 
 		lock.unlock();
 		deliverTrackedFrame(fh, needToMakeKF);
@@ -918,8 +913,6 @@ void FullSystem::addActiveFrame( ImageAndExposure* image, int id )
 
 void FullSystem::deliverTrackedFrame(FrameHessian* fh, bool needKF)
 {
-
-
 	if(linearizeOperation)
 	{
 		if(goStepByStep && lastRefStopID != coarseTracker->refFrameID)
@@ -936,8 +929,7 @@ void FullSystem::deliverTrackedFrame(FrameHessian* fh, bool needKF)
 		}
 		else handleKey( IOWrap::waitKey(1) );
 
-
-
+		//区分关键帧和非关键帧
 		if(needKF) makeKeyFrame(fh);
 		else makeNonKeyFrame(fh);
 	}
@@ -1053,23 +1045,28 @@ void FullSystem::makeNonKeyFrame( FrameHessian* fh)
 	delete fh;
 }
 
+/********************** 为fh创建关键帧 后续送入后端优化 **********************/
 void FullSystem::makeKeyFrame( FrameHessian* fh)
 {
 	// needs to be set by mapping thread
 	{
 		boost::unique_lock<boost::mutex> crlock(shellPoseMutex);
 		assert(fh->shell->trackingRef != 0);
+		//实际上这里的camToWorld就是firstToNew.inverse();
 		fh->shell->camToWorld = fh->shell->trackingRef->camToWorld * fh->shell->camToTrackingRef;
+		//WorldTocam才是一个帧真正的位姿状态变量
 		fh->setEvalPT_scaled(fh->shell->camToWorld.inverse(),fh->shell->aff_g2l);
 	}
 
+	//利用当前的fh帧对容器frameHessians中的未成熟点ImmaturePoint进行跟踪，优化逆深度
+	//刚初始化完frameHessians中只有第一帧 且firstFrame中的所有未成熟点都变成了激活点
+	//所以当fh为fisrtFrame时  这个函数相当于没运行
 	traceNewCoarse(fh);
 
 	boost::unique_lock<boost::mutex> lock(mapMutex);
 
 	// =========================== Flag Frames to be Marginalized. =========================
 	flagFramesForMarginalization(fh);
-
 
 	// =========================== add New Frame to Hessian Struct. =========================
 	fh->idx = frameHessians.size();
@@ -1089,28 +1086,28 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 		if(fh1 == fh) continue;
 		for(PointHessian* ph : fh1->pointHessians)
 		{
+			//创建了当前帧fh与之前的帧fh1上point之间形成的残差 fh1为host fh为target ph为host上的激活点
+			//就是把窗口内以前的所有帧上面的激活点都尝试投影到target 形成残差
 			PointFrameResidual* r = new PointFrameResidual(ph, fh1, fh);
 			r->setState(ResState::IN);
+			//point也持有r 放在容器residual下面  一个point可能有多个residual
 			ph->residuals.push_back(r);
+			//此时ef里insert了 point frame 以及residual
 			ef->insertResidual(r);
+			//设置point下面保存的最新的两个residual量 lastResidual.first是r lastResidual.second是状态
 			ph->lastResiduals[1] = ph->lastResiduals[0];
 			ph->lastResiduals[0] = std::pair<PointFrameResidual*, ResState>(r, ResState::IN);
+			//统计residual的数量
 			numFwdResAdde+=1;
 		}
 	}
-
-
-
 
 	// =========================== Activate Points (& flag for marginalization). =========================
 	activatePointsMT();
 	ef->makeIDX();
 
-
-
-
 	// =========================== OPTIMIZE ALL =========================
-
+	//对滑窗内的关键帧进行优化
 	fh->frameEnergyTH = frameHessians.back()->frameEnergyTH;
 	float rmse = optimize(setting_maxOptIterations);
 
@@ -1306,11 +1303,13 @@ void FullSystem::initializeFromInitializer(FrameHessian* newFrame)
 		boost::unique_lock<boost::mutex> crlock(shellPoseMutex);
 		firstFrame->shell->camToWorld = SE3();
 		firstFrame->shell->aff_g2l = AffLight(0,0);
+		//计算firstFrame的状态量 包括预先计算值PRE_camToWorld = 左乘微小量*当前位姿状态
 		firstFrame->setEvalPT_scaled(firstFrame->shell->camToWorld.inverse(),firstFrame->shell->aff_g2l);
 		firstFrame->shell->trackingRef=0;
 		firstFrame->shell->camToTrackingRef = SE3();
 		newFrame->shell->camToWorld = firstToNew.inverse();
 		newFrame->shell->aff_g2l = AffLight(0,0);
+		//计算newFrame的状态量 包括预先计算值PRE_camToWorld = 左乘微小量*当前位姿状态
 		newFrame->setEvalPT_scaled(newFrame->shell->camToWorld.inverse(),newFrame->shell->aff_g2l);
 		//newFrame在track时的参考帧为fisrtFrame
 		newFrame->shell->trackingRef = firstFrame->shell;
@@ -1350,7 +1349,7 @@ void FullSystem::makeNewTraces(FrameHessian* newFrame, float* gtDepth)
 }
 
 
-
+/****************** 准备出host帧和target帧之间的预先计算值 *********************/
 void FullSystem::setPrecalcValues()
 {
 	for(FrameHessian* fh : frameHessians)
@@ -1362,7 +1361,6 @@ void FullSystem::setPrecalcValues()
 
 	ef->setDeltaF(&Hcalib);
 }
-
 
 void FullSystem::printLogLine()
 {

@@ -471,7 +471,7 @@ Vec6 CoarseTracker::calcRes(int lvl, const SE3 &refToNew, AffLight aff_g2l, floa
 			//累加能量项
 			E += hw *residual*residual*(2-hw);
 			numTermsInE++;
-			//存储投影后的一些量
+			//存储投影后的一些量 为后面求优化中需要用到的雅可比矩阵做准备
 			buf_warped_idepth[numTermsInWarped] = new_idepth;
 			buf_warped_u[numTermsInWarped] = u;
 			buf_warped_v[numTermsInWarped] = v;
@@ -579,7 +579,7 @@ bool CoarseTracker::trackNewestCoarse(
 	{
 		Mat88 H; Vec8 b;
 		float levelCutoffRepeat = 1;
-		//计算从最新关键帧投影到fh上的误差 并且准备好优化要用的导数
+		//计算从最新关键帧投影到fh上的误差以及其他信息 返回到resOld
 		Vec6 resOld = calcRes(lvl, refToNew_current, aff_g2l_current, setting_coarseCutoffTH*levelCutoffRepeat);
 		while(resOld[5] > 0.6 && levelCutoffRepeat < 50)
 		{

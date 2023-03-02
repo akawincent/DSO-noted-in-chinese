@@ -78,10 +78,10 @@ public:
     void debugPlotIDepthMap(float* minID, float* maxID, std::vector<IOWrap::Output3DWrapper*> &wraps);
     void debugPlotIDepthMapFloat(std::vector<IOWrap::Output3DWrapper*> &wraps);
 
-	FrameHessian* lastRef;
-	AffLight lastRef_aff_g2l;
-	FrameHessian* newFrame;
-	int refFrameID;
+	FrameHessian* lastRef;			//最新的参考帧
+	AffLight lastRef_aff_g2l;		//最新参考帧的光度参数
+	FrameHessian* newFrame;			//新进来的一帧
+	int refFrameID;					//参考帧的id
 
 	// act as pure ouptut
 	Vec5 lastResiduals;
@@ -102,22 +102,22 @@ private:
 	void calcGS(int lvl, Mat88 &H_out, Vec8 &b_out, const SE3 &refToNew, AffLight aff_g2l);
 
 	// pc buffers
-	float* pc_u[PYR_LEVELS];
-	float* pc_v[PYR_LEVELS];
-	float* pc_idepth[PYR_LEVELS];
-	float* pc_color[PYR_LEVELS];
-	int pc_n[PYR_LEVELS];
+	float* pc_u[PYR_LEVELS];			//有逆深度的点在每层图像上的x坐标
+	float* pc_v[PYR_LEVELS];			//有逆深度的点在每层图像上的y坐标
+	float* pc_idepth[PYR_LEVELS];		//有逆深度的点在每层图像上的逆深度
+	float* pc_color[PYR_LEVELS];		//有逆深度的点在每层图像上的像素值
+	int pc_n[PYR_LEVELS];				//每层图像上点的个数
 
 	// warped buffers
-	float* buf_warped_idepth;
-	float* buf_warped_u;
-	float* buf_warped_v;
-	float* buf_warped_dx;
-	float* buf_warped_dy;
-	float* buf_warped_residual;
-	float* buf_warped_weight;
-	float* buf_warped_refColor;
-	int buf_warped_n;
+	float* buf_warped_idepth;			//投影后得到点的逆深度
+	float* buf_warped_u;				//投影后得到点的归一化坐标
+	float* buf_warped_v;				//同上
+	float* buf_warped_dx;				//投影后的到点的x轴图像梯度
+	float* buf_warped_dy;				//投影后的到点的y轴图像梯度
+	float* buf_warped_residual;			//投影后构建的残差
+	float* buf_warped_weight;			//投影后的huber权重
+	float* buf_warped_refColor;			//参考帧上的像素值
+	int buf_warped_n;					//投影点的个数
 
 
     std::vector<float*> ptrToDelete;

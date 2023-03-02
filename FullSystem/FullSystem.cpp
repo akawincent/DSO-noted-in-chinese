@@ -279,40 +279,49 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
         ow->pushLiveFrame(fh);
 
 
-
+	//最新的参考帧 (最新的关键帧)
 	FrameHessian* lastF = coarseTracker->lastRef;
-
+	//初始化一套光度参数
 	AffLight aff_last_2_l = AffLight(0,0);
-
+	//设置当前帧对参考帧的一系列位姿假设 这个假设主要来自前面两帧与关键帧两两之间的相对位姿和关键帧的绝对位姿
 	std::vector<SE3,Eigen::aligned_allocator<SE3>> lastF_2_fh_tries;
+	//如果关键帧数量只有两帧，则设置假设相对位姿为单位阵
 	if(allFrameHistory.size() == 2)
 		for(unsigned int i=0;i<lastF_2_fh_tries.size();i++) lastF_2_fh_tries.push_back(SE3());
 	else
 	{
-		FrameShell* slast = allFrameHistory[allFrameHistory.size()-2];
-		FrameShell* sprelast = allFrameHistory[allFrameHistory.size()-3];
-		SE3 slast_2_sprelast;
-		SE3 lastF_2_slast;
+		//FrameShell里面只存储了帧的关键信息
+		FrameShell* slast = allFrameHistory[allFrameHistory.size()-2];		//fh帧的上一帧
+		FrameShell* sprelast = allFrameHistory[allFrameHistory.size()-3];	//fh帧的上上一帧
+		SE3 slast_2_sprelast;		//上一帧到上上一帧的位姿变换
+		SE3 lastF_2_slast;			//最新的关键帧到上一帧的位姿变换
 		{	// lock on global pose consistency!
 			boost::unique_lock<boost::mutex> crlock(shellPoseMutex);
-			slast_2_sprelast = sprelast->camToWorld.inverse() * slast->camToWorld;
-			lastF_2_slast = slast->camToWorld.inverse() * lastF->shell->camToWorld;
-			aff_last_2_l = slast->aff_g2l;
+			slast_2_sprelast = sprelast->camToWorld.inverse() * slast->camToWorld;		//上一帧到上上一帧的运动
+			lastF_2_slast = slast->camToWorld.inverse() * lastF->shell->camToWorld;		//最新关键帧到上一帧的运动
+			aff_last_2_l = slast->aff_g2l;												//上一帧的光度参数
 		}
+		//重要假设！！！！！ 假设从当前帧到上一帧的位姿等于上一帧到上上一帧的位姿
 		SE3 fh_2_slast = slast_2_sprelast;// assumed to be the same as fh_2_slast.
 
-
+		//假设几种从最新关键帧到当前帧fh的运动模型
 		// get last delta-movement.
-		lastF_2_fh_tries.push_back(fh_2_slast.inverse() * lastF_2_slast);	// assume constant motion.
-		lastF_2_fh_tries.push_back(fh_2_slast.inverse() * fh_2_slast.inverse() * lastF_2_slast);	// assume double motion (frame skipped)
+		//匀速模型
+		lastF_2_fh_tries.push_back(fh_2_slast.inverse() * lastF_2_slast);	// assume constant motion. 
+		//倍速模型
+		lastF_2_fh_tries.push_back(fh_2_slast.inverse() * fh_2_slast.inverse() * lastF_2_slast);	// assume double motion (frame skipped) 
+		//半速模型
 		lastF_2_fh_tries.push_back(SE3::exp(fh_2_slast.log()*0.5).inverse() * lastF_2_slast); // assume half motion.
+		//零速模型(从slast到fh是不动的)
 		lastF_2_fh_tries.push_back(lastF_2_slast); // assume zero motion.
+		//零速模型(从LastF到fh是不动的)
 		lastF_2_fh_tries.push_back(SE3()); // assume zero motion FROM KF.
 
 
 		// just try a TON of different initializations (all rotations). In the end,
 		// if they don't work they will only be tried on the coarsest level, which is super fast anyway.
 		// also, if tracking rails here we loose, so we really, really want to avoid that.
+		//针对旋转再设置26x3种(四元数的26种旋转清凉 3个微小变化角度)微小变化量的运动假设 
 		for(float rotDelta=0.02; rotDelta < 0.05; rotDelta++)
 		{
 			lastF_2_fh_tries.push_back(fh_2_slast.inverse() * lastF_2_slast * SE3(Sophus::Quaterniond(1,rotDelta,0,0), Vec3(0,0,0)));			// assume constant motion.
@@ -349,7 +358,7 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 			lastF_2_fh_tries.push_back(SE3());
 		}
 	}
-
+	/**************************** 以上总共假设了5+26*3 = 83种从lastF到fh的运动初值 ******************************/
 
 	Vec3 flowVecs = Vec3(100,100,100);
 	SE3 lastF_2_fh = SE3();
@@ -364,10 +373,14 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 	Vec5 achievedRes = Vec5::Constant(NAN);
 	bool haveOneGood = false;
 	int tryIterations=0;
+	//尝试83种运动假设
 	for(unsigned int i=0;i<lastF_2_fh_tries.size();i++)
-	{
+	{	
+		//把上一帧的光度参数赋值给fh帧的光度参数 作为优化初值
 		AffLight aff_g2l_this = aff_last_2_l;
+		//运动假设
 		SE3 lastF_2_fh_this = lastF_2_fh_tries[i];
+		//track的优化过程
 		bool trackingIsGood = coarseTracker->trackNewestCoarse(
 				fh, lastF_2_fh_this, aff_g2l_this,
 				pyrLevelsUsed-1,
@@ -872,7 +885,7 @@ void FullSystem::addActiveFrame( ImageAndExposure* image, int id )
 			CoarseTracker* tmp = coarseTracker; coarseTracker=coarseTracker_forNewKF; coarseTracker_forNewKF=tmp;
 		}
 
-
+		//跟踪新帧fh
 		Vec4 tres = trackNewCoarse(fh);
 		if(!std::isfinite((double)tres[0]) || !std::isfinite((double)tres[1]) || !std::isfinite((double)tres[2]) || !std::isfinite((double)tres[3]))
         {
@@ -1316,7 +1329,7 @@ void FullSystem::initializeFromInitializer(FrameHessian* newFrame)
 		//newFrame到它的参考帧fisrtFrame之间的位姿  
 		newFrame->shell->camToTrackingRef = firstToNew.inverse();
 	}
-	//标志初始化阶段完成
+	//标志初始化阶段完成 Fullsystem::initialized
 	initialized=true;
 	printf("INITIALIZE FROM INITIALIZER (%d pts)!\n", (int)firstFrame->pointHessians.size());
 }

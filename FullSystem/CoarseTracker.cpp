@@ -338,6 +338,7 @@ void CoarseTracker::calcGSSSE(int lvl, Mat88 &H_out, Vec8 &b_out, const SE3 &ref
 	H_out = acc.H.topLeftCorner<8,8>().cast<double>() * (1.0f/n);
 	b_out = acc.H.topRightCorner<8,1>().cast<double>() * (1.0f/n);
 
+	//乘以权重 按照论文说的
 	H_out.block<8,3>(0,0) *= SCALE_XI_ROT;
 	H_out.block<8,3>(0,3) *= SCALE_XI_TRANS;
 	H_out.block<8,1>(0,6) *= SCALE_A;
@@ -579,8 +580,9 @@ bool CoarseTracker::trackNewestCoarse(
 	{
 		Mat88 H; Vec8 b;
 		float levelCutoffRepeat = 1;
-		//计算从最新关键帧投影到fh上的误差以及其他信息 返回到resOld
+		//计算从最新关键帧投影到fh上的能量项以及其他信息 返回到resOld
 		Vec6 resOld = calcRes(lvl, refToNew_current, aff_g2l_current, setting_coarseCutoffTH*levelCutoffRepeat);
+		//如果误差大于阈值的投影超过总数的60% 并且限制阈值在50以下  可以放宽阈值的限制 重新再计算一遍能量项
 		while(resOld[5] > 0.6 && levelCutoffRepeat < 50)
 		{
 			levelCutoffRepeat*=2;
@@ -589,9 +591,9 @@ bool CoarseTracker::trackNewestCoarse(
             if(!setting_debugout_runquiet)
                 printf("INCREASING cutoff to %f (ratio is %f)!\n", setting_coarseCutoffTH*levelCutoffRepeat, resOld[5]);
 		}
-
+		//计算增量方程中的H和b
 		calcGSSSE(lvl, H, b, refToNew_current, aff_g2l_current);
-
+		//阻尼因子
 		float lambda = 0.01;
 
 		if(debugPrint)
@@ -607,13 +609,15 @@ bool CoarseTracker::trackNewestCoarse(
 			std::cout << refToNew_current.log().transpose() << " AFF " << aff_g2l_current.vec().transpose() <<" (rel " << relAff.transpose() << ")\n";
 		}
 
-
+		//迭代优化
 		for(int iteration=0; iteration < maxIterations[lvl]; iteration++)
 		{
 			Mat88 Hl = H;
 			for(int i=0;i<8;i++) Hl(i,i) *= (1+lambda);
+			//解出增量
 			Vec8 inc = Hl.ldlt().solve(-b);
 
+			//光度参数不同的fix方案
 			if(setting_affineOptModeA < 0 && setting_affineOptModeB < 0)	// fix a, b
 			{
 				inc.head<6>() = Hl.topLeftCorner<6,6>().ldlt().solve(-b.head<6>());
@@ -642,6 +646,7 @@ bool CoarseTracker::trackNewestCoarse(
 
 
 			float extrapFac = 1;
+			//阻尼太小了 要给增量乘以一个因子？  阻尼太小了LM趋于GN  增大增量是觉得收敛太慢了？
 			if(lambda < lambdaExtrapolationLimit) extrapFac = sqrt(sqrt(lambdaExtrapolationLimit / lambda));
 			inc *= extrapFac;
 

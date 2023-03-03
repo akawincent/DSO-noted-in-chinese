@@ -452,10 +452,10 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 	lastCoarseRMSE = achievedRes;
 	//保存帧的关键信息
 	// no lock required, as fh is not used anywhere yet.
-	fh->shell->camToTrackingRef = lastF_2_fh.inverse();
-	fh->shell->trackingRef = lastF->shell;
-	fh->shell->aff_g2l = aff_g2l;
-	fh->shell->camToWorld = fh->shell->trackingRef->camToWorld * fh->shell->camToTrackingRef;
+	fh->shell->camToTrackingRef = lastF_2_fh.inverse();			//当前帧帧到最新关键帧的位姿
+	fh->shell->trackingRef = lastF->shell;						//前端追踪时的参考帧(最新关键帧)
+	fh->shell->aff_g2l = aff_g2l;								//光度参数
+	fh->shell->camToWorld = fh->shell->trackingRef->camToWorld * fh->shell->camToTrackingRef;	//当前帧fh的相机位姿到世界坐标系得位姿变化(就是fh帧绝对位姿的逆)
 
 
 	if(coarseTracker->firstCoarseRMSE < 0)
@@ -911,17 +911,18 @@ void FullSystem::addActiveFrame( ImageAndExposure* image, int id )
 		}
 		else
 		{
+			//计算最新的关键帧和fh之间的相对光度参数
 			Vec2 refToFh=AffLight::fromToVecExposure(coarseTracker->lastRef->ab_exposure, fh->ab_exposure,
 					coarseTracker->lastRef_aff_g2l, fh->shell->aff_g2l);
 
 			// BRIGHTNESS CHECK
+			//创建关键帧的条件  在论文中3.1 Frame Management 的 Step3 Keyframe Creation
 			needToMakeKF = allFrameHistory.size()== 1 ||
 					setting_kfGlobalWeight*setting_maxShiftWeightT *  sqrtf((double)tres[1]) / (wG[0]+hG[0]) +
 					setting_kfGlobalWeight*setting_maxShiftWeightR *  sqrtf((double)tres[2]) / (wG[0]+hG[0]) +
 					setting_kfGlobalWeight*setting_maxShiftWeightRT * sqrtf((double)tres[3]) / (wG[0]+hG[0]) +
 					setting_kfGlobalWeight*setting_maxAffineWeight * fabs(logf((float)refToFh[0])) > 1 ||
 					2*coarseTracker->firstCoarseRMSE < tres[0];
-
 		}
 
         for(IOWrap::Output3DWrapper* ow : outputWrapper)
@@ -1060,6 +1061,7 @@ void FullSystem::makeNonKeyFrame( FrameHessian* fh)
 		boost::unique_lock<boost::mutex> crlock(shellPoseMutex);
 		assert(fh->shell->trackingRef != 0);
 		fh->shell->camToWorld = fh->shell->trackingRef->camToWorld * fh->shell->camToTrackingRef;
+		//设置fh帧的状态变量
 		fh->setEvalPT_scaled(fh->shell->camToWorld.inverse(),fh->shell->aff_g2l);
 	}
 
@@ -1074,15 +1076,13 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 	{
 		boost::unique_lock<boost::mutex> crlock(shellPoseMutex);
 		assert(fh->shell->trackingRef != 0);
-		//实际上这里的camToWorld就是firstToNew.inverse();
+		//计算fh帧从相机坐标系到世界坐标系的位姿变换(实际上就是fh帧绝对位姿的逆)
 		fh->shell->camToWorld = fh->shell->trackingRef->camToWorld * fh->shell->camToTrackingRef;
-		//WorldTocam才是一个帧真正的位姿状态变量
+		//设置状态量
 		fh->setEvalPT_scaled(fh->shell->camToWorld.inverse(),fh->shell->aff_g2l);
 	}
 
 	//利用当前的fh帧对容器frameHessians中的未成熟点ImmaturePoint进行跟踪，优化逆深度
-	//刚初始化完frameHessians中只有第一帧 且firstFrame中的所有未成熟点都变成了激活点
-	//所以当fh为fisrtFrame时  这个函数相当于没运行
 	traceNewCoarse(fh);
 
 	boost::unique_lock<boost::mutex> lock(mapMutex);
@@ -1247,7 +1247,7 @@ void FullSystem::initializeFromInitializer(FrameHessian* newFrame)
 	frameHessians.push_back(firstFrame);
 	//这里的frameID是FrameHessian数据结构中的 并不是CoarseInitializer中的frameID
 	firstFrame->frameID = allKeyFramesHistory.size();
-	//frameHessians是一个FrameShell类型的Vector变量 存帧的关键信息 在Fullsystem.h中被定义
+	//allKeyFramesHistory是一个FrameShell类型的Vector变量 存关键帧的信息 在Fullsystem.h中被定义
 	allKeyFramesHistory.push_back(firstFrame->shell);
 	//把第一帧加入后端优化
 	//ef在实例化Fullsystem时就完成了实例化
@@ -1314,7 +1314,7 @@ void FullSystem::initializeFromInitializer(FrameHessian* newFrame)
 		ef->insertPoint(ph);
 	}
 
-	//firstToNew拿到了trackFrame中优化计算出来的位姿
+	//firstToNew拿到了trackFrame中优化计算出来的从fisrtFrame到newframe的相对位姿
 	SE3 firstToNew = coarseInitializer->thisToNext;
 	//对平移部分缩放尺度因子rescaleFactor
 	firstToNew.translation() /= rescaleFactor;
@@ -1323,20 +1323,19 @@ void FullSystem::initializeFromInitializer(FrameHessian* newFrame)
 	//设置fisrtFrame和newFrame的关键信息 存在shell里
 	{
 		boost::unique_lock<boost::mutex> crlock(shellPoseMutex);
-		firstFrame->shell->camToWorld = SE3();
-		firstFrame->shell->aff_g2l = AffLight(0,0);
-		//计算firstFrame的状态量 包括预先计算值PRE_camToWorld = 左乘微小量*当前位姿状态
+		firstFrame->shell->camToWorld = SE3();						//firstFrame的绝对位姿是李群幺元
+		firstFrame->shell->aff_g2l = AffLight(0,0);					//firstFrame的光度参数为0
+		//计算firstFrame的状态量 
 		firstFrame->setEvalPT_scaled(firstFrame->shell->camToWorld.inverse(),firstFrame->shell->aff_g2l);
-		firstFrame->shell->trackingRef=0;
-		firstFrame->shell->camToTrackingRef = SE3();
-		newFrame->shell->camToWorld = firstToNew.inverse();
-		newFrame->shell->aff_g2l = AffLight(0,0);
-		//计算newFrame的状态量 包括预先计算值PRE_camToWorld = 左乘微小量*当前位姿状态
+		firstFrame->shell->trackingRef=0;							//firstFrame不存在参考帧
+		firstFrame->shell->camToTrackingRef = SE3();				//firstFrame到参考帧的姿态设定为幺元
+		
+		newFrame->shell->camToWorld = firstToNew.inverse();			//newFrame的绝对位姿的逆 = 幺元*从first到new的相对姿态的逆
+		newFrame->shell->aff_g2l = AffLight(0,0);					//newFrame的光度参数为0
+		//计算newFrame的状态量 
 		newFrame->setEvalPT_scaled(newFrame->shell->camToWorld.inverse(),newFrame->shell->aff_g2l);
-		//newFrame在track时的参考帧为fisrtFrame
-		newFrame->shell->trackingRef = firstFrame->shell;
-		//newFrame到它的参考帧fisrtFrame之间的位姿  
-		newFrame->shell->camToTrackingRef = firstToNew.inverse();
+		newFrame->shell->trackingRef = firstFrame->shell;			//newFrame的参考关键帧为firstFrame
+		newFrame->shell->camToTrackingRef = firstToNew.inverse();	//newFrame到它的参考帧fisrtFrame之间的位姿  
 	}
 	//标志初始化阶段完成 Fullsystem::initialized
 	initialized=true;

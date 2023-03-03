@@ -649,7 +649,7 @@ bool CoarseTracker::trackNewestCoarse(
 			//阻尼太小了 要给增量乘以一个因子？  阻尼太小了LM趋于GN  增大增量是觉得收敛太慢了？
 			if(lambda < lambdaExtrapolationLimit) extrapFac = sqrt(sqrt(lambdaExtrapolationLimit / lambda));
 			inc *= extrapFac;
-
+			//为什么还要给解出来的增量乘以权重呢
 			Vec8 incScaled = inc;
 			incScaled.segment<3>(0) *= SCALE_XI_ROT;
 			incScaled.segment<3>(3) *= SCALE_XI_TRANS;
@@ -657,14 +657,15 @@ bool CoarseTracker::trackNewestCoarse(
 			incScaled.segment<1>(7) *= SCALE_B;
 
             if(!std::isfinite(incScaled.sum())) incScaled.setZero();
-
+			//姿态的增量是李代数 要指数映射到李群去相乘更新姿态
 			SE3 refToNew_new = SE3::exp((Vec6)(incScaled.head<6>())) * refToNew_current;
+			//更新相对光度参数
 			AffLight aff_g2l_new = aff_g2l_current;
 			aff_g2l_new.a += incScaled[6];
 			aff_g2l_new.b += incScaled[7];
-
+			//用新的状态变量求一次更新后的能量项
 			Vec6 resNew = calcRes(lvl, refToNew_new, aff_g2l_new, setting_coarseCutoffTH*levelCutoffRepeat);
-
+			//判断是否接受本次迭代的结果
 			bool accept = (resNew[0] / resNew[1]) < (resOld[0] / resOld[1]);
 
 			if(debugPrint)
@@ -680,6 +681,7 @@ bool CoarseTracker::trackNewestCoarse(
 						inc.norm());
 				std::cout << refToNew_new.log().transpose() << " AFF " << aff_g2l_new.vec().transpose() <<" (rel " << relAff.transpose() << ")\n";
 			}
+			//接受迭代更新结果 计算新的H和b 并且减小阻尼因子 让下一次迭代的优化更新慢一点
 			if(accept)
 			{
 				calcGSSSE(lvl, H, b, refToNew_new, aff_g2l_new);
@@ -688,12 +690,13 @@ bool CoarseTracker::trackNewestCoarse(
 				refToNew_current = refToNew_new;
 				lambda *= 0.5;
 			}
+			//增大阻尼因子 让下一次迭代的优化更新更快一点 使得能量项变小
 			else
 			{
 				lambda *= 4;
 				if(lambda < lambdaExtrapolationLimit) lambda = lambdaExtrapolationLimit;
 			}
-
+			//增量足够小了 跳出循环
 			if(!(inc.norm() > 1e-3))
 			{
 				if(debugPrint)
@@ -703,11 +706,14 @@ bool CoarseTracker::trackNewestCoarse(
 		}
 
 		// set last residual for that level, as well as flow indicators.
+		//平均每个投影关系的误差的平方根
 		lastResiduals[lvl] = sqrtf((float)(resOld[0] / resOld[1]));
 		lastFlowIndicators = resOld.segment<3>(2);
+		//如果平均误差大于阈值 就判断本次追踪失败 回到FullSystem::trackNewCoarse换下一个运动假设进行优化
 		if(lastResiduals[lvl] > 1.5*minResForAbort[lvl]) return false;
 
-
+		//如果曾经放大过calcGSSSE求误差时的阈值(说明针对当前层 运动假设不是非常的好)  
+		//那么该层的追踪优化需要重新进行一次(这时已经有了一个更靠谱的姿态变换初值)
 		if(levelCutoffRepeat > 1 && !haveRepeated)
 		{
 			lvl++;
@@ -716,6 +722,7 @@ bool CoarseTracker::trackNewestCoarse(
 		}
 	}
 
+	//保存追踪结果
 	// set!
 	lastToNew_out = refToNew_current;
 	aff_g2l_out = aff_g2l_current;
@@ -735,7 +742,7 @@ bool CoarseTracker::trackNewestCoarse(
 
 	if(setting_affineOptModeA < 0) aff_g2l_out.a=0;
 	if(setting_affineOptModeB < 0) aff_g2l_out.b=0;
-
+	//优化成功
 	return true;
 }
 

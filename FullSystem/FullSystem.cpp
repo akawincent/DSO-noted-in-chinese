@@ -148,6 +148,7 @@ FullSystem::FullSystem()
 	statistics_numMargResFwd = 0;
 	statistics_numMargResBwd = 0;
 
+	//初始化
 	lastCoarseRMSE.setConstant(100);
 
 	currentMinActDist=2;
@@ -360,6 +361,8 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 	}
 	/**************************** 以上总共假设了5+26*3 = 83种从lastF到fh的运动初值 ******************************/
 
+
+	//保存变量
 	Vec3 flowVecs = Vec3(100,100,100);
 	SE3 lastF_2_fh = SE3();
 	AffLight aff_g2l = AffLight(0,0);
@@ -407,9 +410,14 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 
 
 		// do we have a new winner?
+
+		/*****************成功追踪到fh 并且本次运动假设追踪的能量小于上一次运动假设追踪的能量********************/
+		/*****************            则更新能量阈值achieveRes为当前各层的能量            ********************/
+
 		if(trackingIsGood && std::isfinite((float)coarseTracker->lastResiduals[0]) && !(coarseTracker->lastResiduals[0] >=  achievedRes[0]))
 		{
 			//printf("take over. minRes %f -> %f!\n", achievedRes[0], coarseTracker->lastResiduals[0]);
+			//记录本次优化追踪求得的位姿和光度参数
 			flowVecs = coarseTracker->lastFlowIndicators;
 			aff_g2l = aff_g2l_this;
 			lastF_2_fh = lastF_2_fh_this;
@@ -417,6 +425,7 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 		}
 
 		// take over achieved res (always).
+		//阈值achievedRes是动态变化的
 		if(haveOneGood)
 		{
 			for(int i=0;i<5;i++)
@@ -426,12 +435,12 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 			}
 		}
 
-
+		//此次追踪fh的能量小于了1.5*追踪上一个fh时的能量 
+		//这代表当前的运动假设经过追踪优化后 效果已经很不错了  可以直接break出来了 表示这就是追踪fh的最优结果
         if(haveOneGood &&  achievedRes[0] < lastCoarseRMSE[0]*setting_reTrackThreshold)
             break;
-
 	}
-
+	
 	if(!haveOneGood)
 	{
         printf("BIG ERROR! tracking failed entirely. Take predictred pose and hope we may somehow recover.\n");
@@ -439,9 +448,9 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 		aff_g2l = aff_last_2_l;
 		lastF_2_fh = lastF_2_fh_tries[0];
 	}
-
+	//更新lastCoarseRMSE  这个变量表示了追踪上一帧时的能量项 初始化时设置为100
 	lastCoarseRMSE = achievedRes;
-
+	//保存帧的关键信息
 	// no lock required, as fh is not used anywhere yet.
 	fh->shell->camToTrackingRef = lastF_2_fh.inverse();
 	fh->shell->trackingRef = lastF->shell;
@@ -470,7 +479,7 @@ Vec4 FullSystem::trackNewCoarse(FrameHessian* fh)
 						<< tryIterations << "\n";
 	}
 
-
+	//返回(能量项 纯平移的所有像素平均移动的大小 0 平移加旋转的所有像素平均移动的大小)
 	return Vec4(achievedRes[0], flowVecs[0], flowVecs[1], flowVecs[2]);
 }
 

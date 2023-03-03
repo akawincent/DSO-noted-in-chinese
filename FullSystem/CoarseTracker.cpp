@@ -338,7 +338,7 @@ void CoarseTracker::calcGSSSE(int lvl, Mat88 &H_out, Vec8 &b_out, const SE3 &ref
 	H_out = acc.H.topLeftCorner<8,8>().cast<double>() * (1.0f/n);
 	b_out = acc.H.topRightCorner<8,1>().cast<double>() * (1.0f/n);
 
-	//乘以权重 按照论文说的
+	//乘以权重 按照论文说的  为啥这里的权重不乘以两次呢  和初始化中的操作不一致
 	H_out.block<8,3>(0,0) *= SCALE_XI_ROT;
 	H_out.block<8,3>(0,3) *= SCALE_XI_TRANS;
 	H_out.block<8,1>(0,6) *= SCALE_A;

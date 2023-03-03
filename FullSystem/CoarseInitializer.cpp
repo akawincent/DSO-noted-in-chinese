@@ -68,9 +68,8 @@ CoarseInitializer::CoarseInitializer(int ww, int hh) : thisToNext_aff(0,0), this
 	printDebug=false;
 
 	//Eigen库中.diagonal()将矩阵对角线元素作为向量返回
-	//姿态变换矩阵旋转部分的尺度
-	wM.diagonal()[0] = wM.diagonal()[1] = wM.diagonal()[2] = SCALE_XI_ROT;
-	//姿态变换矩阵平移部分的尺度	
+	//增量方程中的权重
+	wM.diagonal()[0] = wM.diagonal()[1] = wM.diagonal()[2] = SCALE_XI_ROT;	
 	wM.diagonal()[3] = wM.diagonal()[4] = wM.diagonal()[5] = SCALE_XI_TRANS;
 	wM.diagonal()[6] = SCALE_A;
 	wM.diagonal()[7] = SCALE_B;
@@ -187,7 +186,7 @@ bool CoarseInitializer::trackFrame(FrameHessian* newFrameHessian, std::vector<IO
 			Hl -= Hsc*(1/(1+lambda));
 			Vec8f bl = b - bsc*(1/(1+lambda));
 
-			//note:why? 
+			//note:why？  论文中提到要乘以权重  依据代码来看 这个权重是针对J加的 不过为什么旋转部分和平移部分乘的权重对不上呢
 			Hl = wM * Hl * wM * (0.01f/(w[lvl]*h[lvl]));
 			bl = wM * bl * (0.01f/(w[lvl]*h[lvl]));
 

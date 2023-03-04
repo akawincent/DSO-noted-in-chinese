@@ -70,11 +70,16 @@ void PointHessian::release()
 	residuals.clear();
 }
 
-
+/******************* 计算零空间 ********************/
+/* parameter：
+		state_zero ——————————> FrameHessian中的state
+*/
 void FrameHessian::setStateZero(const Vec10 &state_zero)
 {
 	assert(state_zero.head<6>().squaredNorm() < 1e-20);
+	
 
+	//把state状态量固定线性化 用state_zero存一下
 	this->state_zero = state_zero;
 
 

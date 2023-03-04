@@ -143,7 +143,7 @@ namespace dso
 		Vec6 nullspaces_scale;	 //尺度零空间
 
 		// variable info.
-		SE3 worldToCam_evalPT; //相机位姿 状态量
+		SE3 worldToCam_evalPT; //相机位姿 状态量  是李群
 
 		/********Vec10 [0~5]为位姿的左乘扰动   [6,7] 光度参数a和b (注意这里不是增量 而是状态量)*********/
 		// state的三个值都是线性化处的增量  对于光度参数，state就是值
@@ -151,7 +151,7 @@ namespace dso
 		Vec10 state_scaled; //乘上比例系数的状态增量  真正计算得出的增量值
 		Vec10 state;		// [0-5: worldToCam-leftEps. 6-7: a,b]
 
-		// step是与上一次优化结果的状态增量
+		// step是与上一次优化结果的状态增量W
 		Vec10 step;			//求解增量方程得到的增量
 		Vec10 step_backup;	// 上一次增量的备份
 		Vec10 state_backup; // 上一次状态的备份
@@ -183,7 +183,7 @@ namespace dso
 		{
 			this->state = state;
 			// SE(3)平移量
-			state_scaled.segment<3>(0) = SCALE_XI_TRANS * state.segment<3>(0);
+			state_scaled.segment<3>(0) = SCALE_XWI_TRANS * state.segment<3>(0);
 			// SE(3)旋转量
 			state_scaled.segment<3>(3) = SCALE_XI_ROT * state.segment<3>(3);
 			state_scaled[6] = SCALE_A * state[6];
@@ -200,15 +200,17 @@ namespace dso
 		//去掉state_scaled的尺度因子变为state
 		inline void setStateScaled(const Vec10 &state_scaled)
 		{
-			//就是把state_scaled的尺度因子去掉赋给state
+			//给FrameHessian::state赋值
+			//可是传进来的state_scaled(即setEvalPT_scaled中的initial_state)的前六项全是空的啊
 			this->state_scaled = state_scaled;
 			state.segment<3>(0) = SCALE_XI_TRANS_INVERSE * state_scaled.segment<3>(0);
 			state.segment<3>(3) = SCALE_XI_ROT_INVERSE * state_scaled.segment<3>(3);
 			state[6] = SCALE_A_INVERSE * state_scaled[6];
 			state[7] = SCALE_B_INVERSE * state_scaled[7];
+			//八九项是什么？
 			state[8] = SCALE_A_INVERSE * state_scaled[8];
 			state[9] = SCALE_B_INVERSE * state_scaled[9];
-			//PRE_worldToCam = 相机姿态的左乘微小量 * 相机姿态状态量
+			//PRE_worldToCam = 左乘tangent space的微小量 * 该帧相机绝对姿态状态量 注意是SE(3)
 			PRE_worldToCam = SE3::exp(w2c_leftEps()) * get_worldToCam_evalPT();
 			PRE_camToWorld = PRE_worldToCam.inverse();
 			// setCurrentNullspace();
@@ -220,7 +222,8 @@ namespace dso
 
 			this->worldToCam_evalPT = worldToCam_evalPT;
 			setState(state);
-			setStateZero(state); //设置FEJ点的状态增量
+			//设置FEJ点的状态 计算零空间 
+			setStateZero(state); 
 		};
 
 		//同上 是恢复尺度后的状态量
@@ -231,10 +234,11 @@ namespace dso
 			//把光度参数加进去
 			initial_state[6] = aff_g2l.a;
 			initial_state[7] = aff_g2l.b;
+			//当前帧的绝对位姿
 			this->worldToCam_evalPT = worldToCam_evalPT;
 			//去掉state_scaled的尺度因子变为state
 			setStateScaled(initial_state);
-			//设置FEJ点的状态增量 计算零空间
+			//设置FEJ点的状态 计算零空间 
 			setStateZero(this->get_state());
 		};
 

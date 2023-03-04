@@ -147,9 +147,9 @@ namespace dso
 
 		/********Vec10 [0~5]为位姿的左乘扰动   [6,7] 光度参数a和b (注意这里不是增量 而是状态量)*********/
 		// state的三个值都是线性化处的增量  对于光度参数，state就是值
-		Vec10 state_zero;	// FEJ固定的线性化点的状态增量
-		Vec10 state_scaled; //乘上比例系数的状态增量  真正计算得出的增量值
-		Vec10 state;		// [0-5: worldToCam-leftEps. 6-7: a,b]
+		Vec10 state_zero;		// FEJ固定的线性化点的状态量
+		Vec10 state_scaled; 	//乘上比例系数的状态量  
+		Vec10 state;			//状态量 [0-5: worldToCam-leftEps. 6-7: a,b]
 
 		// step是与上一次优化结果的状态增量W
 		Vec10 step;			//求解增量方程得到的增量
@@ -211,6 +211,7 @@ namespace dso
 			state[8] = SCALE_A_INVERSE * state_scaled[8];
 			state[9] = SCALE_B_INVERSE * state_scaled[9];
 			//PRE_worldToCam = 左乘tangent space的微小量 * 该帧相机绝对姿态状态量 注意是SE(3)
+			//为w2c_leftEps()取得是this->state_scaled的前六项(空的？)
 			PRE_worldToCam = SE3::exp(w2c_leftEps()) * get_worldToCam_evalPT();
 			PRE_camToWorld = PRE_worldToCam.inverse();
 			// setCurrentNullspace();

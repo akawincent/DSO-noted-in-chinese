@@ -94,9 +94,9 @@ public:
 
 	ImmaturePointStatus traceOn(FrameHessian* frame, const Mat33f &hostToFrame_KRKi, const Vec3f &hostToFrame_Kt, const Vec2f &hostToFrame_affine, CalibHessian* HCalib, bool debugPrint=false);
 
-	ImmaturePointStatus lastTraceStatus; 	//上一次极限跟踪的点的状态
-	Vec2f lastTraceUV;						//上一次限跟踪的点的像素坐标
-	float lastTracePixelInterval;			//上一次极限跟踪的视差lamda
+	ImmaturePointStatus lastTraceStatus; 	//上一次极线跟踪的点的状态
+	Vec2f lastTraceUV;						//上一次极线跟踪的点的像素坐标
+	float lastTracePixelInterval;			//上一次极线跟踪的不确定度
 
 	float idepth_GT;
 

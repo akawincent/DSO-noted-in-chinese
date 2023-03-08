@@ -42,7 +42,7 @@ public:
 	FrameHessian* target;
 };
 
-
+//点的状态
 enum ImmaturePointStatus {
 	IPS_GOOD=0,					// traced well and good
 	IPS_OOB,					// OOB: end tracking & marginalize!
@@ -86,8 +86,8 @@ public:
 
 	ImmaturePointStatus traceOn(FrameHessian* frame, const Mat33f &hostToFrame_KRKi, const Vec3f &hostToFrame_Kt, const Vec2f &hostToFrame_affine, CalibHessian* HCalib, bool debugPrint=false);
 
-	ImmaturePointStatus lastTraceStatus;
-	Vec2f lastTraceUV;
+	ImmaturePointStatus lastTraceStatus; 	//最新极限跟踪的点的状态
+	Vec2f lastTraceUV;						//最新极限跟踪的点的像素坐标
 	float lastTracePixelInterval;
 
 	float idepth_GT;

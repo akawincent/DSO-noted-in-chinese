@@ -33,6 +33,8 @@ ImmaturePoint::ImmaturePoint(int u_, int v_, FrameHessian* host_, float type, Ca
 : u(u_), v(v_), host(host_), my_type(type), idepth_min(0), idepth_max(NAN), lastTraceStatus(IPS_UNINITIALIZED)
 {
 
+	//idepth_min初始化未0 idepth_max初始化为NAN
+
 	gradH.setZero();
 
 	for(int idx=0;idx<patternNum;idx++)
@@ -65,7 +67,7 @@ ImmaturePoint::~ImmaturePoint()
 }
 
 
-
+/******************************** 使用极线匹配和深度滤波对未成熟点进行深度估计 ********************************/
 /*
  * returns
  * * OOB -> point is optimized and marginalized
@@ -76,8 +78,9 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 {
 	if(lastTraceStatus == ImmaturePointStatus::IPS_OOB) return lastTraceStatus;
 
-
 	debugPrint = false;//rand()%100==0;
+
+	//极线搜索最大长度(这里的极线是已经投影到新帧像素平面上的)
 	float maxPixSearch = (wG[0]+hG[0])*setting_maxPixSearch;
 
 	if(debugPrint)
@@ -94,11 +97,14 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 //	const float slackInterval = 0.8;			// if pixel-interval is smaller than this, leave it be.
 //	const float minImprovementFactor = 2;		// if pixel-interval is smaller than this, leave it be.
 	// ============== project min and max. return if one of them is OOB ===================
+	//把未成熟点从host帧投影到fh帧
 	Vec3f pr = hostToFrame_KRKi * Vec3f(u,v, 1);
 	Vec3f ptpMin = pr + hostToFrame_Kt*idepth_min;
+	//逆深度最小情况时投影得到的像素坐标
 	float uMin = ptpMin[0] / ptpMin[2];
 	float vMin = ptpMin[1] / ptpMin[2];
 
+	//投影不成功  把该点状态设置为OOB
 	if(!(uMin > 4 && vMin > 4 && uMin < wG[0]-5 && vMin < hG[0]-5))
 	{
 		if(debugPrint) printf("OOB uMin %f %f - %f %f %f (id %f-%f)!\n",
@@ -113,12 +119,13 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 	float vMax;
 	Vec3f ptpMax;
 	if(std::isfinite(idepth_max))
-	{
+	{	
+		//逆深度最大情况时投影得到的像素坐标
 		ptpMax = pr + hostToFrame_Kt*idepth_max;
 		uMax = ptpMax[0] / ptpMax[2];
 		vMax = ptpMax[1] / ptpMax[2];
 
-
+		//投影不成功 设置点的状态为OOB
 		if(!(uMax > 4 && vMax > 4 && uMax < wG[0]-5 && vMax < hG[0]-5))
 		{
 			if(debugPrint) printf("OOB uMax  %f %f - %f %f!\n",u,v, uMax, vMax);
@@ -130,8 +137,10 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 
 
 		// ============== check their distance. everything below 2px is OK (-> skip). ===================
-		dist = (uMin-uMax)*(uMin-uMax) + (vMin-vMax)*(vMin-vMax);
-		dist = sqrtf(dist);
+		dist = (uMin-uMax)*(uMin-uMax) + (vMin-vMax)*(vMin-vMax);	
+		dist = sqrtf(dist);		//最小逆深度投影过来的像素位置和最大逆深度投影过来的像素位置之间的距离
+		
+		//dist足够小 表示逆深度已经收敛了 设置点的状态为SKIPPED 没必要进行深度滤波
 		if(dist < setting_trace_slackInterval)
 		{
 			if(debugPrint)
@@ -143,25 +152,27 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 		}
 		assert(dist>0);
 	}
-	else
+	else		//idepth_max没有给赋值(初始化为NAN)
 	{
 		dist = maxPixSearch;
 
 		// project to arbitrary depth to get direction.
+		//假设深度为100m 逆深度0.01m 然后投影
 		ptpMax = pr + hostToFrame_Kt*0.01;
 		uMax = ptpMax[0] / ptpMax[2];
 		vMax = ptpMax[1] / ptpMax[2];
 
-		// direction.
+		// direction. //可以计算得到方向
 		float dx = uMax-uMin;
 		float dy = vMax-vMin;
 		float d = 1.0f / sqrtf(dx*dx+dy*dy);
 
 		// set to [setting_maxPixSearch].
+		//根据方向和最大搜索长度 确定uMax和uMin
 		uMax = uMin + dist*dx*d;
 		vMax = vMin + dist*dy*d;
 
-		// may still be out!
+		// may still be out!  投影不成功 设置点的状态为OOB
 		if(!(uMax > 4 && vMax > 4 && uMax < wG[0]-5 && vMax < hG[0]-5))
 		{
 			if(debugPrint) printf("OOB uMax-coarse %f %f %f!\n", uMax, vMax,  ptpMax[2]);
@@ -182,15 +193,23 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 		return lastTraceStatus = ImmaturePointStatus::IPS_OOB;
 	}
 
-
 	// ============== compute error-bounds on result in pixel. if the new interval is not at least 1/2 of the old, SKIP ===================
+	//Vec2f(dx,dy)表示极线方向  Vec2f(dy,-dx)表示极线的垂直方向
+	//注意这里的dx和dy是没有被单位化的
 	float dx = setting_trace_stepsize*(uMax-uMin);
 	float dy = setting_trace_stepsize*(vMax-vMin);
-
+	//注意这里的gradH是host帧的图像梯度  为什么呢？
+	//a = (极线方向 点乘 图像梯度) 的平方
 	float a = (Vec2f(dx,dy).transpose() * gradH * Vec2f(dx,dy));
+	//b = (垂直极线方向 点乘 图像梯度) 的平方
 	float b = (Vec2f(dy,-dx).transpose() * gradH * Vec2f(dy,-dx));
+	//噪声误差 即像素匹配不确定度
+	//注意：整条极线上的像素匹配不确定度都是一样的
+	//如果极限方向平行于图像梯度 这是最优的极线方向 那么errorInPixel = 0.4 
+	//如果极限方向垂直于图像梯度 这是最差的极线方向 那么errorInPixel就会非常大
 	float errorInPixel = 0.2f + 0.2f * (a+b) / a;
 
+	//噪声太大了 说明极线方向和图像梯度方向垂直 极限搜索是进行不下去的  
 	if(errorInPixel*setting_trace_minImprovementFactor > dist && std::isfinite(idepth_max))
 	{
 		if(debugPrint)
@@ -199,12 +218,13 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 		lastTracePixelInterval=dist;
 		return lastTraceStatus = ImmaturePointStatus::IPS_BADCONDITION;
 	}
-
+	//像素匹配不确定度最大为10
 	if(errorInPixel >10) errorInPixel=10;
 
 
 
 	// ============== do the discrete search ===================
+	//dx和dy都除以dist 代表了每一步的步长
 	dx /= dist;
 	dy /= dist;
 
@@ -225,6 +245,7 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 		dist = maxPixSearch;
 	}
 
+	//极线搜索的步数  
 	int numSteps = 1.9999f + dist / setting_trace_stepsize;
 	Mat22f Rplane = hostToFrame_KRKi.topLeftCorner<2,2>();
 
@@ -232,13 +253,9 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 	float ptx = uMin-randShift*dx;
 	float pty = vMin-randShift*dy;
 
-
 	Vec2f rotatetPattern[MAX_RES_PER_POINT];
 	for(int idx=0;idx<patternNum;idx++)
 		rotatetPattern[idx] = Rplane * Vec2f(patternP[idx][0], patternP[idx][1]);
-
-
-
 
 	if(!std::isfinite(dx) || !std::isfinite(dy))
 	{
@@ -249,15 +266,15 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 		return lastTraceStatus = ImmaturePointStatus::IPS_OOB;
 	}
 
-
-
 	float errors[100];
 	float bestU=0, bestV=0, bestEnergy=1e10;
 	int bestIdx=-1;
 	if(numSteps >= 100) numSteps = 99;
 
+	//极线搜索过程 搜numSteps次
 	for(int i=0;i<numSteps;i++)
 	{
+		//计算8邻域像素块匹配的SSD
 		float energy=0;
 		for(int idx=0;idx<patternNum;idx++)
 		{
@@ -276,19 +293,21 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 			printf("step %.1f %.1f (id %f): energy = %f!\n",
 					ptx, pty, 0.0f, energy);
 
-
+		//记录SSD
 		errors[i] = energy;
+		//如果SSD更小 则记录此时搜索到的像素位置以及SSD
 		if(energy < bestEnergy)
 		{
 			bestU = ptx; bestV = pty; bestEnergy = energy; bestIdx = i;
 		}
-
+		//继续沿着极限方向搜索
 		ptx+=dx;
 		pty+=dy;
 	}
 
 
 	// find best score outside a +-2px radius.
+	//找个第二好的点 在最好点2个像素以外的范围找
 	float secondBest=1e10;
 	for(int i=0;i<numSteps;i++)
 	{
@@ -300,9 +319,11 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 
 
 	// ============== do GN optimization ===================
+	//用GN法找亚像素级别的最好匹配点
 	float uBak=bestU, vBak=bestV, gnstepsize=1, stepBack=0;
 	if(setting_trace_GNIterations>0) bestEnergy = 1e5;
 	int gnStepsGood=0, gnStepsBad=0;
+	//GN优化迭代三次
 	for(int it=0;it<setting_trace_GNIterations;it++)
 	{
 		float H = 1, b=0, energy=0;
@@ -386,6 +407,7 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 
 
 	// ============== set new interval ===================
+	//已知匹配的像素位置以及像素位置不确定度 可以进行深度滤波 更新深度的min和max
 	if(dx*dx>dy*dy)
 	{
 		idepth_min = (pr[2]*(bestU-errorInPixel*dx) - pr[0]) / (hostToFrame_Kt[0] - hostToFrame_Kt[2]*(bestU-errorInPixel*dx));
@@ -407,9 +429,10 @@ ImmaturePointStatus ImmaturePoint::traceOn(FrameHessian* frame,const Mat33f &hos
 		lastTraceUV = Vec2f(-1,-1);
 		return lastTraceStatus = ImmaturePointStatus::IPS_OUTLIER;
 	}
-
+	//更新lastTracePixelInterval lastTraceUV  lastTraceStatus
 	lastTracePixelInterval=2*errorInPixel;
 	lastTraceUV = Vec2f(bestU, bestV);
+	//到这里就可以认为这个点成功完成了极线匹配和深度滤波
 	return lastTraceStatus = ImmaturePointStatus::IPS_GOOD;
 }
 

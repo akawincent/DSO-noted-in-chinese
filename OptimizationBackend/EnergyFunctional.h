@@ -95,9 +95,14 @@ public:
 
 	void setAdjointsF(CalibHessian* Hcalib);
 
+	//保存着插入到后端优化的关键帧
 	std::vector<EFFrame*> frames;
+	//nPoints:窗口内的成熟点数量
+	//nFrames:窗口内的帧数量
+	//nResiduals:窗口内残差关系的数量
 	int nPoints, nFrames, nResiduals;
 
+	//边缘化后的留下的先验信息
 	MatXX HM;
 	VecX bM;
 
@@ -134,8 +139,10 @@ private:
 	void calcLEnergyPt(int min, int max, Vec10* stats, int tid);
 
 	void orthogonalize(VecX* b, MatXX* H);
+	//将host和target帧上的变化量转化到相对位移上
 	Mat18f* adHTdeltaF;
 
+	//向量空间的矩阵伴随
 	Mat88* adHost;
 	Mat88* adTarget;
 

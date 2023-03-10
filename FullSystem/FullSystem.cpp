@@ -494,18 +494,20 @@ void FullSystem::traceNewCoarse(FrameHessian* fh)
 	K(1,1) = Hcalib.fyl();
 	K(0,2) = Hcalib.cxl();
 	K(1,2) = Hcalib.cyl();
-
+	//frameHessians中存了历史的所有关键帧  遍历frameHessians
 	for(FrameHessian* host : frameHessians)		// go through all active frames
 	{
-
+		//从host到fh的位姿变换
 		SE3 hostToNew = fh->PRE_worldToCam * host->PRE_camToWorld;
 		Mat33f KRKi = K * hostToNew.rotationMatrix().cast<float>() * K.inverse();
 		Vec3f Kt = K * hostToNew.translation().cast<float>();
-
+		//计算host和fh之间的相对光度参数
 		Vec2f aff = AffLight::fromToVecExposure(host->ab_exposure, fh->ab_exposure, host->aff_g2l(), fh->aff_g2l()).cast<float>();
-
+		//遍历host帧上的未激活点
+		//如果host是first帧 则相当于没执行  一因为first帧全是激活点
 		for(ImmaturePoint* ph : host->immaturePoints)
-		{
+		{	
+			//极线搜索与深度滤波
 			ph->traceOn(fh, KRKi, Kt, aff, &Hcalib, false );
 
 			if(ph->lastTraceStatus==ImmaturePointStatus::IPS_GOOD) trace_good++;
@@ -538,6 +540,7 @@ void FullSystem::activatePointsMT_Reductor(
 	ImmaturePointTemporaryResidual* tr = new ImmaturePointTemporaryResidual[frameHessians.size()];
 	for(int k=min;k<max;k++)
 	{
+		//优化未成熟点的逆深度  使得逆深度收敛
 		(*optimized)[k] = optimizeImmaturePoint((*toOptimize)[k],1,tr);
 	}
 	delete[] tr;
@@ -547,7 +550,9 @@ void FullSystem::activatePointsMT_Reductor(
 
 void FullSystem::activatePointsMT()
 {
-
+	//ef->nPoints代表的是此时窗口中已有的成熟点数量
+	//setting_desiredPointDensity = 2000 期望的窗口内维持成熟点的数量
+	//currentMinActDist在Fullsystem::Fullsystem中初始化为2
 	if(ef->nPoints < setting_desiredPointDensity*0.66)
 		currentMinActDist -= 0.8;
 	if(ef->nPoints < setting_desiredPointDensity*0.8)
@@ -565,7 +570,7 @@ void FullSystem::activatePointsMT()
 		currentMinActDist += 0.2;
 	if(ef->nPoints > setting_desiredPointDensity)
 		currentMinActDist += 0.1;
-
+	//限制currentMinActDist范围
 	if(currentMinActDist < 0) currentMinActDist = 0;
 	if(currentMinActDist > 4) currentMinActDist = 4;
 
@@ -574,7 +579,7 @@ void FullSystem::activatePointsMT()
                 currentMinActDist, (int)(setting_desiredPointDensity), ef->nPoints);
 
 
-
+	//取最新的关键帧 就是当前的fh
 	FrameHessian* newestHs = frameHessians.back();
 
 	// make dist map.
@@ -585,7 +590,7 @@ void FullSystem::activatePointsMT()
 
 	std::vector<ImmaturePoint*> toOptimize; toOptimize.reserve(20000);
 
-
+	//遍历窗口
 	for(FrameHessian* host : frameHessians)		// go through all active frames
 	{
 		if(host == newestHs) continue;
@@ -594,13 +599,14 @@ void FullSystem::activatePointsMT()
 		Mat33f KRKi = (coarseDistanceMap->K[1] * fhToNew.rotationMatrix().cast<float>() * coarseDistanceMap->Ki[0]);
 		Vec3f Kt = (coarseDistanceMap->K[1] * fhToNew.translation().cast<float>());
 
-
+		//遍历一个关键帧上的所有未成熟点
 		for(unsigned int i=0;i<host->immaturePoints.size();i+=1)
 		{
 			ImmaturePoint* ph = host->immaturePoints[i];
 			ph->idxInImmaturePoints = i;
 
 			// delete points that have never been traced successfully, or that are outlier on the last trace.
+			//删掉没有被良好追踪的未成熟点
 			if(!std::isfinite(ph->idepth_max) || ph->lastTraceStatus == IPS_OUTLIER)
 			{
 //				immature_invalid_deleted++;
@@ -611,6 +617,7 @@ void FullSystem::activatePointsMT()
 			}
 
 			// can activate only if this is true.
+			//未成熟点的激活条件
 			bool canActivate = (ph->lastTraceStatus == IPS_GOOD
 					|| ph->lastTraceStatus == IPS_SKIPPED
 					|| ph->lastTraceStatus == IPS_BADCONDITION
@@ -624,6 +631,7 @@ void FullSystem::activatePointsMT()
 			if(!canActivate)
 			{
 				// if point will be out afterwards, delete it instead.
+				//未满足激活条件 且host帧要被边缘化掉 并且点在投影到fh时超出了图像 那么就把这个未成熟点删了
 				if(ph->host->flaggedForMarginalization || ph->lastTraceStatus == IPS_OOB)
 				{
 //					immature_notReady_deleted++;
@@ -639,7 +647,7 @@ void FullSystem::activatePointsMT()
 			Vec3f ptp = KRKi * Vec3f(ph->u, ph->v, 1) + Kt*(0.5f*(ph->idepth_max+ph->idepth_min));
 			int u = ptp[0] / ptp[2] + 0.5f;
 			int v = ptp[1] / ptp[2] + 0.5f;
-
+			//将未成熟点加入到优化序列
 			if((u > 0 && v > 0 && u < wG[1] && v < hG[1]))
 			{
 
@@ -671,7 +679,7 @@ void FullSystem::activatePointsMT()
 	else
 		activatePointsMT_Reductor(&optimized, &toOptimize, 0, toOptimize.size(), 0, 0);
 
-
+	//创建PointHessian 将未成熟点真正变成激活点  并删除逆深度收敛不好的点	
 	for(unsigned k=0;k<toOptimize.size();k++)
 	{
 		PointHessian* newpoint = optimized[k];
@@ -711,8 +719,6 @@ void FullSystem::activatePointsMT()
 			}
 		}
 	}
-
-
 }
 
 
@@ -1054,6 +1060,7 @@ void FullSystem::blockUntilMappingIsFinished()
 
 }
 
+/******************** 非关键帧的作用就是投影未成熟点并且进行深度滤波 *************************/
 void FullSystem::makeNonKeyFrame( FrameHessian* fh)
 {
 	// needs to be set by mapping thread. no lock required since we are in mapping thread.
@@ -1066,6 +1073,7 @@ void FullSystem::makeNonKeyFrame( FrameHessian* fh)
 	}
 
 	traceNewCoarse(fh);
+	//非关键帧直接删了  不会存下来的
 	delete fh;
 }
 
@@ -1082,23 +1090,26 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 		fh->setEvalPT_scaled(fh->shell->camToWorld.inverse(),fh->shell->aff_g2l);
 	}
 
-	//利用当前的fh帧对容器frameHessians中的未成熟点ImmaturePoint进行跟踪，优化逆深度
+	//利用当前的fh帧对容器frameHessians中的未成熟点ImmaturePoint进行跟踪，估计逆深度
 	traceNewCoarse(fh);
 
 	boost::unique_lock<boost::mutex> lock(mapMutex);
 
 	// =========================== Flag Frames to be Marginalized. =========================
+	//标记需要被边缘化的关键帧
 	flagFramesForMarginalization(fh);
 
 	// =========================== add New Frame to Hessian Struct. =========================
+	//把fh帧加入到滑动窗口frameHessians中 也加入到allKeyFramesHistory(这是用来收集历史所有关键帧信息的)
 	fh->idx = frameHessians.size();
 	frameHessians.push_back(fh);
 	fh->frameID = allKeyFramesHistory.size();
 	allKeyFramesHistory.push_back(fh->shell);
+	//ef是EnergyFunctional类 向ef中加入fh帧
 	ef->insertFrame(fh, &Hcalib);
 
+	//计算frameHessian中所有帧之间的距离 相对光度参数以及一些姿态预算计算值
 	setPrecalcValues();
-
 
 
 	// =========================== add new residuals for old points =========================
@@ -1125,6 +1136,7 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 	}
 
 	// =========================== Activate Points (& flag for marginalization). =========================
+	//激活窗口中符合条件的未成熟点
 	activatePointsMT();
 	ef->makeIDX();
 
@@ -1294,15 +1306,16 @@ void FullSystem::initializeFromInitializer(FrameHessian* newFrame)
 		ImmaturePoint* pt = new ImmaturePoint(point->u+0.5f,point->v+0.5f,firstFrame,point->my_type, &Hcalib);
 		//能量阈值置为无穷大 不要这个点 其实就是在初始化ImmaturePoint时有像素灰度值不合理的点 就不要了
 		if(!std::isfinite(pt->energyTH)) { delete pt; continue; }
+		//first帧上面的未成熟点的idepth_max和idepth_min初始化都为1
 		pt->idepth_max=pt->idepth_min=1;
 		//把immaturpoint pt转化为成熟点ph，创建PointHessian类型
 		PointHessian* ph = new PointHessian(pt, &Hcalib);
 		//建完了ph就删了pt
 		delete pt;
 		if(!std::isfinite(ph->energyTH)) {delete ph; continue;}
-		//计算idepth_scaled idepth
+		//计算激活点idepth_scaled idepth
 		ph->setIdepthScaled(point->iR*rescaleFactor);
-		//计算idepth_zero idepth_zero_scaled nullspaces_scale
+		//计算激活点idepth_zero idepth_zero_scaled nullspaces_scale
 		ph->setIdepthZero(ph->idepth);
 		//初始化时是有先验深度的
 		ph->hasDepthPrior=true;
@@ -1373,8 +1386,10 @@ void FullSystem::makeNewTraces(FrameHessian* newFrame, float* gtDepth)
 /****************** 准备出host帧和target帧之间的预先计算值 *********************/
 void FullSystem::setPrecalcValues()
 {
+	//遍历滑动窗口
 	for(FrameHessian* fh : frameHessians)
 	{
+		//计算所有host帧到fh帧的一些值
 		fh->targetPrecalc.resize(frameHessians.size());
 		for(unsigned int i=0;i<frameHessians.size();i++)
 			fh->targetPrecalc[i].set(fh, frameHessians[i], &Hcalib);
@@ -1382,6 +1397,7 @@ void FullSystem::setPrecalcValues()
 
 	ef->setDeltaF(&Hcalib);
 }
+
 
 void FullSystem::printLogLine()
 {

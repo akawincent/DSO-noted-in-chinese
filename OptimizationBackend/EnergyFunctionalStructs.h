@@ -44,10 +44,6 @@ class EFFrame;
 class EnergyFunctional;
 
 
-
-
-
-
 class EFResidual
 {
 public:
@@ -139,7 +135,8 @@ public:
 };
 
 
-
+//存储关于Frame的信息用于后端优化
+//EFFrame会被FrameHessian持有
 class EFFrame
 {
 public:
@@ -158,7 +155,7 @@ public:
 
 
 	std::vector<EFPoint*> points;
-	FrameHessian* data;
+	FrameHessian* data;  		//EFFrame也持有对应的FrameHessian
 	int idx;	// idx in frames.
 
 	int frameID;

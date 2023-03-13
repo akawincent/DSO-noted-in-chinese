@@ -56,7 +56,7 @@ extern bool EFIndicesValid;
 extern bool EFDeltaValid;
 
 
-
+/*****************存储着用于后端优化的量:帧 点 残差关系*****************/
 class EnergyFunctional {
 public:
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
@@ -71,13 +71,18 @@ public:
 	EnergyFunctional();
 	~EnergyFunctional();
 
-
+	//向后端优化中加入残差关系
 	EFResidual* insertResidual(PointFrameResidual* r);
+	//向后端优化中加入关键帧
 	EFFrame* insertFrame(FrameHessian* fh, CalibHessian* Hcalib);
+	//向后端优化中加入激活点
 	EFPoint* insertPoint(PointHessian* ph);
 
+	//扔掉不好的残差关系
 	void dropResidual(EFResidual* r);
+	//边缘化帧
 	void marginalizeFrame(EFFrame* fh);
+	//移除点
 	void removePoint(EFPoint* ph);
 
 
@@ -92,10 +97,10 @@ public:
 	void makeIDX();
 
 	void setDeltaF(CalibHessian* HCalib);
-
+	//设置帧间的伴随矩阵，因为固定住线性化点了，因此要把增量从线性化点映射到相对位姿空间上
 	void setAdjointsF(CalibHessian* Hcalib);
 
-	//保存着插入到后端优化的关键帧
+	//保存着插入到后端优化的关键帧  这里存的是Frame用于后端优化的信息 也就是EEFrame类
 	std::vector<EFFrame*> frames;
 	//nPoints:窗口内的成熟点数量
 	//nFrames:窗口内的帧数量
@@ -145,7 +150,7 @@ private:
 	//向量空间的矩阵伴随
 	Mat88* adHost;
 	Mat88* adTarget;
-
+	//将host和target的变化量转化到相对位姿
 	Mat88f* adHostF;
 	Mat88f* adTargetF;
 

@@ -50,6 +50,7 @@ namespace dso
 	class EFFrame;
 	class EFPoint;
 
+// 这些SCALE因子是用来消除不同状态量量纲影响的
 #define SCALE_IDEPTH 1.0f // scales internal value to idepth.
 #define SCALE_XI_ROT 1.0f
 #define SCALE_XI_TRANS 0.5f
@@ -78,17 +79,21 @@ namespace dso
 		FrameHessian *target; // defines column
 
 		// precalc values
+		//优化中使用的相对位姿
 		Mat33f PRE_RTll;
+		Vec3f PRE_tTll;
+		//线性化点的相对位姿
+		Mat33f PRE_RTll_0;
+		Vec3f PRE_tTll_0;
+
+		//与K相乘的量
 		Mat33f PRE_KRKiTll;
 		Mat33f PRE_RKiTll;
-		Mat33f PRE_RTll_0;
+		Vec3f PRE_KtTll;
 
 		Vec2f PRE_aff_mode;
 		float PRE_b0_mode;
 
-		Vec3f PRE_tTll;
-		Vec3f PRE_KtTll;
-		Vec3f PRE_tTll_0;
 		//两帧之间的距离  用于判断是否边缘化
 		float distanceLL;
 

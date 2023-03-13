@@ -49,10 +49,14 @@ void EFResidual::takeDataF()
 }
 
 
+//获取这个帧state的delta增量
 void EFFrame::takeData()
 {
+	//这里的data是这个帧的FrameHessian类
 	prior = data->getPrior().head<8>();
+	//获取delta量 = 此刻优化时的增量 - 边缘化时刻的增量
 	delta = data->get_state_minus_stateZero().head<8>();
+	//获取delta先验量 = 此刻优化时的增量 - zero
 	delta_prior =  (data->get_state() - data->getPriorZero()).head<8>();
 
 
@@ -69,7 +73,7 @@ void EFFrame::takeData()
 
 
 	assert(data->frameID != -1);
-
+	//给个id
 	frameID = data->frameID;
 }
 

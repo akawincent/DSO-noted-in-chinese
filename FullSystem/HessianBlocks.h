@@ -143,11 +143,11 @@ namespace dso
 		Vec6 nullspaces_scale;	 //尺度零空间
 
 		// variable info.
-		SE3 worldToCam_evalPT; //相机位姿 状态量  是李群
+		SE3 worldToCam_evalPT; //相机位姿状态量  也是FEJ的线性化点
 
 		/********Vec10 [0~5]为位姿的左乘扰动   [6,7] 光度参数a和b (注意这里不是增量 而是状态量)*********/
 		// state的三个值都是线性化处的增量  对于光度参数，state就是值
-		Vec10 state_zero;		// FEJ固定的线性化点的状态量
+		Vec10 state_zero;		//边缘化时刻的状态量
 		Vec10 state_scaled; 	//乘上比例系数的状态量  
 		Vec10 state;			//状态量 [0-5: worldToCam-leftEps. 6-7: a,b]
 
@@ -160,11 +160,11 @@ namespace dso
 		EIGEN_STRONG_INLINE const Vec10 &get_state_zero() const { return state_zero; }
 		EIGEN_STRONG_INLINE const Vec10 &get_state() const { return state; }
 		EIGEN_STRONG_INLINE const Vec10 &get_state_scaled() const { return state_scaled; }
-		//线性化点处的微小变化的增量之差
+		//线性化方向上的增量  增量delata = k时刻的增量 - 边缘化时刻的增量
 		EIGEN_STRONG_INLINE const Vec10 get_state_minus_stateZero() const { return get_state() - get_state_zero(); }
 
 		// precalc values
-		SE3 PRE_worldToCam;
+		SE3 PRE_worldToCam;	//LM迭代时候用的变量 表示(线性化点的状态量+增量)
 		SE3 PRE_camToWorld;
 		std::vector<FrameFramePrecalc, Eigen::aligned_allocator<FrameFramePrecalc>> targetPrecalc;
 		MinimalImageB3 *debugImage;
@@ -227,7 +227,7 @@ namespace dso
 			setStateZero(state); 
 		};
 
-		//同上 是恢复尺度后的状态量
+		//设定worldToCam_evalPT 设定线性化点
 		inline void setEvalPT_scaled(const SE3 &worldToCam_evalPT, const AffLight &aff_g2l)
 		{
 			//10维的状态变量

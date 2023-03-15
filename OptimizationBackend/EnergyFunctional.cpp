@@ -460,7 +460,7 @@ EFFrame* EnergyFunctional::insertFrame(FrameHessian* fh, CalibHessian* Hcalib)
 	EFAdjointsValid=false;
 	EFDeltaValid=false;
 
-	//建立两帧之间的相对状态对主导帧和目标帧的状态的求导 后端窗口滑动优化中用到
+	//建立两帧之间的相对状态量的增量对主导帧和目标帧的状态增量的导数 后端窗口滑动优化中用到
 	setAdjointsF(Hcalib);
 	//
 	makeIDX();

@@ -44,15 +44,13 @@ bool EFIndicesValid = false;
 //是否设置状态增量值
 bool EFDeltaValid = false;
 
-
 void EnergyFunctional::setAdjointsF(CalibHessian* Hcalib)
 {
-
 	if(adHost != 0) delete[] adHost;
 	if(adTarget != 0) delete[] adTarget;
-	//创建主帧
+	//创建host帧伴随矩阵
 	adHost = new Mat88[nFrames*nFrames];
-	//创建目标帧
+	//创建target帧伴随矩阵
 	adTarget = new Mat88[nFrames*nFrames];
 
 	for(int h=0;h<nFrames;h++)		//遍历主帧
@@ -61,22 +59,25 @@ void EnergyFunctional::setAdjointsF(CalibHessian* Hcalib)
 			//EFrame->data中保存的是FrameHessian信息
 			FrameHessian* host = frames[h]->data;
 			FrameHessian* target = frames[t]->data;
-			//得到从host到target之间的相对位姿
+			//得到从host到target之间的相对位姿 这些位姿是线性化点的
 			SE3 hostToTarget = target->get_worldToCam_evalPT() * host->get_worldToCam_evalPT().inverse();
 
 			Mat88 AH = Mat88::Identity();
 			Mat88 AT = Mat88::Identity();
-
+ 
+			//相对位姿增量对host帧位姿增量的导数  为啥要transpose?
 			AH.topLeftCorner<6,6>() = -hostToTarget.Adj().transpose();
+			//相对位姿增量对target帧位姿增量的导数
 			AT.topLeftCorner<6,6>() = Mat66::Identity();
 
-
+			//相对光度参数增量对host帧以及target帧光度参数的增量的导数
 			Vec2f affLL = AffLight::fromToVecExposure(host->ab_exposure, target->ab_exposure, host->aff_g2l_0(), target->aff_g2l_0()).cast<float>();
 			AT(6,6) = -affLL[0];
 			AH(6,6) = affLL[0];
 			AT(7,7) = -1;
 			AH(7,7) = affLL[0];
 
+			//连伴随矩阵都要乘SCALE权重
 			AH.block<3,8>(0,0) *= SCALE_XI_TRANS;
 			AH.block<3,8>(3,0) *= SCALE_XI_ROT;
 			AH.block<1,8>(6,0) *= SCALE_A;
@@ -86,6 +87,7 @@ void EnergyFunctional::setAdjointsF(CalibHessian* Hcalib)
 			AT.block<1,8>(6,0) *= SCALE_A;
 			AT.block<1,8>(7,0) *= SCALE_B;
 
+			//存着这些导数
 			adHost[h+t*nFrames] = AH;
 			adTarget[h+t*nFrames] = AT;
 		}
@@ -442,9 +444,9 @@ EFFrame* EnergyFunctional::insertFrame(FrameHessian* fh, CalibHessian* Hcalib)
 	eff->idx = frames.size();
 	//把eff存在容器frames里
 	frames.push_back(eff);
-	//EnergyFunctional中的成员变量nFrames加1
+	//EnergyFunctional中的成员变量nFrames加1 窗口内帧的数量+1
 	nFrames++;
-	//eff传给FrameHessian类中的efFrame变量，建立当前帧与eff之间的关联
+	//eff传给FrameHessian类中的efFrame变量，建立FrameHessian与EFFrame之间的关联
 	fh->efFrame = eff;
 
 	assert(HM.cols() == 8*nFrames+CPARS-8);
@@ -463,7 +465,7 @@ EFFrame* EnergyFunctional::insertFrame(FrameHessian* fh, CalibHessian* Hcalib)
 	//
 	makeIDX();
 
-
+	//更新covisuable关系
 	for(EFFrame* fh2 : frames)
 	{
         connectivityMap[(((uint64_t)eff->frameID) << 32) + ((uint64_t)fh2->frameID)] = Eigen::Vector2i(0,0);

@@ -214,7 +214,7 @@ void FrameFramePrecalc::set(FrameHessian* host, FrameHessian* target, CalibHessi
 {
 	this->host = host;
 	this->target = target;
-	//host与target之间的姿态变换  固定线性化点的
+	//host与target之间的姿态变换  固定线性化点的 以使用FEJ
 	SE3 leftToLeft_0 = target->get_worldToCam_evalPT() * host->get_worldToCam_evalPT().inverse();
 	//旋转部分
 	PRE_RTll_0 = (leftToLeft_0.rotationMatrix()).cast<float>();
@@ -222,7 +222,7 @@ void FrameFramePrecalc::set(FrameHessian* host, FrameHessian* target, CalibHessi
 	PRE_tTll_0 = (leftToLeft_0.translation()).cast<float>();
 
 
-	//带着优化时增量的的host与target之间的姿态变换  这里应该是LM迭代时要的 用于计算误差(这个东西是需要随着优化一直更新的)
+	//带着优化时增量的的host与target之间的姿态变换  这里应该是LM迭代时要的 用于计算误差(误差是需要随着优化一直更新的)
 	SE3 leftToLeft = target->PRE_worldToCam * host->PRE_camToWorld;
 	PRE_RTll = (leftToLeft.rotationMatrix()).cast<float>();
 	PRE_tTll = (leftToLeft.translation()).cast<float>();

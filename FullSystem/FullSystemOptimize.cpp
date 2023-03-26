@@ -52,14 +52,18 @@ namespace dso
 void FullSystem::linearizeAll_Reductor(bool fixLinearization, std::vector<PointFrameResidual*>* toRemove, int min, int max, Vec10* stats, int tid)
 {
 	for(int k=min;k<max;k++)
-	{
+	{	
+		//遍历所有的残差r 执行linearize
 		PointFrameResidual* r = activeResiduals[k];
+		//能量项全部累加到*status[0]  
+		//linearize函数执行了最底层的求误差函数的各类Jacobian
 		(*stats)[0] += r->linearize(&Hcalib);
-
+		
 		if(fixLinearization)
-		{
+		{	
+			//设置了r的状态计算了JpJdF
 			r->applyRes(true);
-
+			
 			if(r->efResidual->isActive())
 			{
 				if(r->isNew)
@@ -76,6 +80,7 @@ void FullSystem::linearizeAll_Reductor(bool fixLinearization, std::vector<PointF
 					p->numGoodResiduals++;
 				}
 			}
+			//把不符合条件的残差加入到toRemove中
 			else
 			{
 				toRemove[tid].push_back(activeResiduals[k]);
@@ -90,6 +95,8 @@ void FullSystem::applyRes_Reductor(bool copyJacobians, int min, int max, Vec10* 
 	for(int k=min;k<max;k++)
 		activeResiduals[k]->applyRes(true);
 }
+
+
 void FullSystem::setNewFrameEnergyTH()
 {
 
@@ -98,25 +105,26 @@ void FullSystem::setNewFrameEnergyTH()
 	allResVec.reserve(activeResiduals.size()*2);
 	FrameHessian* newFrame = frameHessians.back();
 
+	//收集投影目标帧为最新帧的r的能量(算上了OOB的点)
 	for(PointFrameResidual* r : activeResiduals)
 		if(r->state_NewEnergyWithOutlier >= 0 && r->target == newFrame)
 		{
 			allResVec.push_back(r->state_NewEnergyWithOutlier);
 
 		}
-
+	//所有残差关系都没形成  相当于投影失败了
 	if(allResVec.size()==0)
 	{
 		newFrame->frameEnergyTH = 12*12*patternNum;
 		return;		// should never happen, but lets make sure.
 	}
 
-
+	//nthIdx = 0.7*所有残差个数*2
 	int nthIdx = setting_frameEnergyTHN*allResVec.size();
-
+	//这还用说？......
 	assert(nthIdx < (int)allResVec.size());
 	assert(setting_frameEnergyTHN < 1);
-
+	//找到allResVec序列中第nthIdx小的能量赋值给nthElement
 	std::nth_element(allResVec.begin(), allResVec.begin()+nthIdx, allResVec.end());
 	float nthElement = sqrtf(allResVec[nthIdx]);
 
@@ -124,7 +132,7 @@ void FullSystem::setNewFrameEnergyTH()
 
 
 
-
+	//设置最新帧的能量阈值 (注意是帧的能量)
     newFrame->frameEnergyTH = nthElement*setting_frameEnergyTHFacMedian;
 	newFrame->frameEnergyTH = 26.0f*setting_frameEnergyTHConstWeight + newFrame->frameEnergyTH*(1-setting_frameEnergyTHConstWeight);
 	newFrame->frameEnergyTH = newFrame->frameEnergyTH*newFrame->frameEnergyTH;
@@ -139,13 +147,15 @@ void FullSystem::setNewFrameEnergyTH()
 //			meanElement, nthElement, sqrtf(newFrame->frameEnergyTH),
 //			good, bad);
 }
+
+
 Vec3 FullSystem::linearizeAll(bool fixLinearization)
 {
 	double lastEnergyP = 0;
 	double lastEnergyR = 0;
 	double num = 0;
 
-
+	//要被边缘化掉的残差？ NUM_THREADS = 6
 	std::vector<PointFrameResidual*> toRemove[NUM_THREADS];
 	for(int i=0;i<NUM_THREADS;i++) toRemove[i].clear();
 
@@ -157,17 +167,19 @@ Vec3 FullSystem::linearizeAll(bool fixLinearization)
 	else
 	{
 		Vec10 stats;
+		//min  = 0 ，max  = activeResidual.size()
 		linearizeAll_Reductor(fixLinearization, toRemove, 0,activeResiduals.size(),&stats,0);
+		//lastEnergyP存储了所有r的能量项
 		lastEnergyP = stats[0];
 	}
 
-
+	//设置了最新帧的能量阈值(用来约束投影形成的r不要太大)
 	setNewFrameEnergyTH();
 
-
+	//true：固定线性化点  false: 不固定线性化
 	if(fixLinearization)
 	{
-
+		//设置lastResidual
 		for(PointFrameResidual* r : activeResiduals)
 		{
 			PointHessian* ph = r->point;
@@ -175,11 +187,8 @@ Vec3 FullSystem::linearizeAll(bool fixLinearization)
 				ph->lastResiduals[0].second = r->state_state;
 			else if(ph->lastResiduals[1].first == r)
 				ph->lastResiduals[1].second = r->state_state;
-
-
-
 		}
-
+		//去掉toRemove里的残差
 		int nResRemoved=0;
 		for(int i=0;i<NUM_THREADS;i++)
 		{
@@ -205,7 +214,7 @@ Vec3 FullSystem::linearizeAll(bool fixLinearization)
 		//printf("FINAL LINEARIZATION: removed %d / %d residuals!\n", nResRemoved, (int)activeResiduals.size());
 
 	}
-
+	//这个lastEnergyR和num都是0啊
 	return Vec3(lastEnergyP, lastEnergyR, num);
 }
 
@@ -404,7 +413,7 @@ void FullSystem::printOptRes(const Vec3 &res, double resL, double resM, double r
 
 }
 
-
+/******************** 对滑动窗口内的关键帧进行GN优化 *******************/
 float FullSystem::optimize(int mnumOptIts)
 {
 
@@ -412,28 +421,29 @@ float FullSystem::optimize(int mnumOptIts)
 	if(frameHessians.size() < 3) mnumOptIts = 20;
 	if(frameHessians.size() < 4) mnumOptIts = 15;
 
-
-
-
-
-
 	// get statistics and active residuals.
-
+	/*************** 将未线性化的残差加入到activeResidual容器 ***************/	
 	activeResiduals.clear();
 	int numPoints = 0;
 	int numLRes = 0;
+	//遍历所有帧
 	for(FrameHessian* fh : frameHessians)
+		//遍历所有激活点
 		for(PointHessian* ph : fh->pointHessians)
 		{
+			//遍历所有构成的残差
 			for(PointFrameResidual* r : ph->residuals)
-			{
+			{	
+				//初始化r->efResidual时isLinearized都初始化为false
 				if(!r->efResidual->isLinearized)
-				{
+				{	
+					//把point->residuals中的r拿出来又放到了activeResiduals中
 					activeResiduals.push_back(r);
+					//residual状态重置
 					r->resetOOB();
 				}
 				else
-					numLRes++;
+					numLRes++;	//已经线性化的计数
 			}
 			numPoints++;
 		}
@@ -441,7 +451,7 @@ float FullSystem::optimize(int mnumOptIts)
     if(!setting_debugout_runquiet)
         printf("OPTIMIZE %d pts, %d active res, %d lin res!\n",ef->nPoints,(int)activeResiduals.size(), numLRes);
 
-
+	//计算所有的activeResidual的误差以及Jacobian  false表示没有固定线性化
 	Vec3 lastEnergy = linearizeAll(false);
 	double lastEnergyL = calcLEnergy();
 	double lastEnergyM = calcMEnergy();
@@ -557,13 +567,7 @@ float FullSystem::optimize(int mnumOptIts)
 	ef->setAdjointsF(&Hcalib);
 	setPrecalcValues();
 
-
-
-
 	lastEnergy = linearizeAll(true);
-
-
-
 
 	if(!std::isfinite((double)lastEnergy[0]) || !std::isfinite((double)lastEnergy[1]) || !std::isfinite((double)lastEnergy[2]))
     {
@@ -592,18 +596,10 @@ float FullSystem::optimize(int mnumOptIts)
 		}
 	}
 
-
-
-
 	debugPlotTracking();
 
 	return sqrtf((float)(lastEnergy[0] / (patternNum*ef->resInA)));
-
 }
-
-
-
-
 
 void FullSystem::solveSystem(int iteration, double lambda)
 {

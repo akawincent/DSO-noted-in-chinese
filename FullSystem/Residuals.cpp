@@ -82,17 +82,22 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 	if(state_state == ResState::OOB)
 		{ state_NewState = ResState::OOB; return state_energy; }
 
-	//拿到这个残差对应的host和target帧之间的预先计算值
+	//拿到这个残差对应的host和target帧之间的预先计算值 
 	FrameFramePrecalc* precalc = &(host->targetPrecalc[target->idx]);
 
 	float energyLeft=0;
 	
 	const Eigen::Vector3f* dIl = target->dI;				//目标帧的像素信息
 	//const float* const Il = target->I;
+
+	//优化中随着增量更新变化的
 	const Mat33f &PRE_KRKiTll = precalc->PRE_KRKiTll;		//K*旋转*K^-1
 	const Vec3f &PRE_KtTll = precalc->PRE_KtTll;			//K*平移
-	const Mat33f &PRE_RTll_0 = precalc->PRE_RTll_0;			//旋转部分(原始的位姿变换)	
-	const Vec3f &PRE_tTll_0 = precalc->PRE_tTll_0;			//平移部分(原始的位姿变换)
+
+	//线性化点处固定的位姿
+	const Mat33f &PRE_RTll_0 = precalc->PRE_RTll_0;			//旋转部分	
+	const Vec3f &PRE_tTll_0 = precalc->PRE_tTll_0;			//平移部分
+
 	const float * const color = point->color;				//像素灰度值
 	const float * const weights = point->weights;			//像素的权重
 
@@ -110,13 +115,17 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 		Vec3f KliP;
 
 		//如果从host到target的投影不成功  就把该residual设为OOB 直接返回他的能量
+		//这里的投影用的是线性化点处固定的位姿
 		if(!projectPoint(point->u, point->v, point->idepth_zero_scaled, 0, 0,HCalib,
 				PRE_RTll_0,PRE_tTll_0, drescale, u, v, Ku, Kv, KliP, new_idepth))
 			{ state_NewState = ResState::OOB; return state_energy; }
+
 		//(point在target帧上的像素横坐标,point在target帧上的像素纵坐标,point相对于target帧上的逆深度)
 		centerProjectedTo = Vec3f(Ku, Kv, new_idepth);
 
 		/*********** 所有的导数的数学推导参考:https://www.cnblogs.com/JingeTU/p/8395046.html *************/
+		//这里的Jacobian都是线性化点处的导数 在一次优化中的所有迭代里都是不变的
+
 		// diff d_idepth
 		//dx2/dp1
 		d_d_x = drescale * (PRE_tTll_0[0]-PRE_tTll_0[2]*u)*SCALE_IDEPTH*HCalib->fxl();
@@ -182,13 +191,14 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 	for(int idx=0;idx<patternNum;idx++)
 	{
 		float Ku, Kv;
+		//这里的投影要用变化的位姿 需要让residual数值产生变化
 		if(!projectPoint(point->u+patternP[idx][0], point->v+patternP[idx][1], point->idepth_scaled, PRE_KRKiTll, PRE_KtTll, Ku, Kv))
 			{ state_NewState = ResState::OOB; return state_energy; }
 
 		projectedTo[idx][0] = Ku;
 		projectedTo[idx][1] = Kv;
 
-		//计算residual的数值
+		//计算residual的数值  
         Vec3f hitColor = (getInterpolatedElement33(dIl, Ku, Kv, wG[0]));
         float residual = hitColor[0] - (float)(affLL[0] * color[idx] + affLL[1]);
 
@@ -206,17 +216,22 @@ double PointFrameResidual::linearize(CalibHessian* HCalib)
 		//能量
 		energyLeft += w*w*hw *residual*residual*(2-hw);
 
+		//这一部分导数是不需要FEJ的
 		{
 			if(hw < 1) hw = sqrtf(hw);
 			hw = hw*w;
 
 			hitColor[1]*=hw;
 			hitColor[2]*=hw;
+
 			//r21  这里是经过 hw加权的
 			J->resF[idx] = residual*hw;
+
 			//JIdx = dr21/dx2 = wh * [gx gy] 
+			//图像梯度是不需要线性固定的
 			J->JIdx[0][idx] = hitColor[1];
 			J->JIdx[1][idx] = hitColor[2];
+
 			//JabF[0] = dr21/da21 JabF[1] = dr21/db21
 			J->JabF[0][idx] = drdA*hw;
 			J->JabF[1][idx] = hw;

@@ -244,7 +244,8 @@ namespace dso
 			this->worldToCam_evalPT = worldToCam_evalPT;
 			//去掉state_scaled的尺度因子变为state
 			setStateScaled(initial_state);
-			//设置FEJ点的状态 计算零空间 
+			//设置FEJ点的状态 计算零空间   
+			//传入的就是上面计算出来的state，然后得到state_zero 这个state_zero在函数体内被赋值了state
 			setStateZero(this->get_state());
 		};
 

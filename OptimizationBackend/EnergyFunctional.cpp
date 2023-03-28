@@ -183,16 +183,18 @@ void EnergyFunctional::setDeltaF(CalibHessian* HCalib)
 		for(int t=0;t<nFrames;t++)
 		{
 			int idx = h+t*nFrames;
+			//把绝对状态变量在tanget space的累积增量(当前累积增量 - 边缘化时固定线性化点处的累积增量)转化到相对状态变量
 			adHTdeltaF[idx] = frames[h]->data->get_state_minus_stateZero().head<8>().cast<float>().transpose() * adHostF[idx]
 					        +frames[t]->data->get_state_minus_stateZero().head<8>().cast<float>().transpose() * adTargetF[idx];
 		}
-
+	//计算一下相机的增量
 	cDeltaF = HCalib->value_minus_value_zero.cast<float>();
+	//这里又算了一遍6自由度位姿+光度参数的增量
 	for(EFFrame* f : frames)
 	{
 		f->delta = f->data->get_state_minus_stateZero().head<8>();
 		f->delta_prior = (f->data->get_state() - f->data->getPriorZero()).head<8>();
-
+		//也计算了逆深度的增量
 		for(EFPoint* p : f->points)
 			p->deltaF = p->data->idepth-p->data->idepth_zero;
 	}
@@ -326,8 +328,9 @@ double EnergyFunctional::calcMEnergyF()
 	assert(EFDeltaValid);
 	assert(EFAdjointsValid);
 	assert(EFIndicesValid);
-
+	//这里的delta是边缘化SC留下来的状态变量的更新量
 	VecX delta = getStitchedDeltaF();
+	//经过边缘化后留下的先验能量
 	return delta.dot(2*bM + HM*delta);
 }
 
@@ -394,6 +397,7 @@ void EnergyFunctional::calcLEnergyPt(int min, int max, Vec10* stats, int tid)
 	(*stats)[0] += E.A;
 }
 
+/********** 这个函数返回了所有需要被边缘化的变量所构成的残差能量之和 **********/
 double EnergyFunctional::calcLEnergyF_MT()
 {
 	assert(EFDeltaValid);
@@ -403,13 +407,15 @@ double EnergyFunctional::calcLEnergyF_MT()
 	double E = 0;
 	for(EFFrame* f : frames)
 		//cwiseProduct():返回两个矩阵同位置的元素分别相乘的新矩阵 
+		//高斯牛顿近似后的二次项  要注意有些f是不会被边缘化的 这些f给E的贡献是0
         E += f->delta_prior.cwiseProduct(f->prior).dot(f->delta_prior);
 
+	//把内参矩阵对应的二次项也加入到先验能量中
 	E += cDeltaF.cwiseProduct(cPriorF).dot(cDeltaF);
 
 	red->reduce(boost::bind(&EnergyFunctional::calcLEnergyPt,
 			this, _1, _2, _3, _4), 0, allPoints.size(), 50);
-
+	//最后这里加进来的姑且认为是论文中2.3 公式15里的一次项和常数项c'
 	return E+red->stats[0];
 }
 
@@ -951,7 +957,8 @@ void EnergyFunctional::makeIDX()
 
 VecX EnergyFunctional::getStitchedDeltaF() const
 {
-	VecX d = VecX(CPARS+nFrames*8); d.head<CPARS>() = cDeltaF.cast<double>();
+	VecX d = VecX(CPARS+nFrames*8); 			//CPARS = 4
+	d.head<CPARS>() = cDeltaF.cast<double>();
 	for(int h=0;h<nFrames;h++) d.segment<8>(CPARS+8*h) = frames[h]->delta;
 	return d;
 }

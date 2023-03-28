@@ -52,7 +52,8 @@ void EnergyFunctional::setAdjointsF(CalibHessian* Hcalib)
 	adHost = new Mat88[nFrames*nFrames];
 	//创建target帧伴随矩阵
 	adTarget = new Mat88[nFrames*nFrames];
-
+	
+	/**************** 这是把窗口内所有帧的伴随矩阵都求了 **************/
 	for(int h=0;h<nFrames;h++)		//遍历主帧
 		for(int t=0;t<nFrames;t++)	//遍历目标帧
 		{
@@ -108,7 +109,7 @@ void EnergyFunctional::setAdjointsF(CalibHessian* Hcalib)
 
 	cPriorF = cPrior.cast<float>();
 
-
+	//标志着Adjoint矩阵全部设置完成
 	EFAdjointsValid = true;
 }
 
@@ -139,6 +140,7 @@ EnergyFunctional::EnergyFunctional()
 	resInA = resInL = resInM = 0;
 	currentLambda=0;
 }
+
 EnergyFunctional::~EnergyFunctional()
 {
 	for(EFFrame* f : frames)
@@ -172,9 +174,7 @@ EnergyFunctional::~EnergyFunctional()
 	delete accSSE_bot;
 }
 
-
-
-
+//
 void EnergyFunctional::setDeltaF(CalibHessian* HCalib)
 {
 	if(adHTdeltaF != 0) delete[] adHTdeltaF;
@@ -243,10 +243,6 @@ void EnergyFunctional::accumulateLF_MT(MatXX &H, VecX &b, bool MT)
 		resInL = accSSE_top_L->nres[0];
 	}
 }
-
-
-
-
 
 void EnergyFunctional::accumulateSCF_MT(MatXX &H, VecX &b, bool MT)
 {
@@ -398,9 +394,6 @@ void EnergyFunctional::calcLEnergyPt(int min, int max, Vec10* stats, int tid)
 	(*stats)[0] += E.A;
 }
 
-
-
-
 double EnergyFunctional::calcLEnergyF_MT()
 {
 	assert(EFDeltaValid);
@@ -409,6 +402,7 @@ double EnergyFunctional::calcLEnergyF_MT()
 
 	double E = 0;
 	for(EFFrame* f : frames)
+		//cwiseProduct():返回两个矩阵同位置的元素分别相乘的新矩阵 
         E += f->delta_prior.cwiseProduct(f->prior).dot(f->delta_prior);
 
 	E += cDeltaF.cwiseProduct(cPriorF).dot(cDeltaF);

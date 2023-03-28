@@ -108,6 +108,7 @@ public:
 	int nPoints, nFrames, nResiduals;
 
 	//边缘化后的留下的先验信息
+	//原来的H和b经过SC之后的结果
 	MatXX HM;
 	VecX bM;
 

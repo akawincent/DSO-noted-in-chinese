@@ -141,18 +141,19 @@ class EFFrame
 {
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
+	//EFFrame->data = FrameHessian
 	EFFrame(FrameHessian* d) : data(d)
 	{
 		takeData();
 	}
 	void takeData();
 
-
+	//注释见EFFrame::takeData()
 	Vec8 prior;				// prior hessian (diagonal)
 	Vec8 delta_prior;		// = state-state_prior (E_prior = (delta_prior)' * diag(prior) * (delta_prior)
 	Vec8 delta;				// state - state_zero.
 
-
+	
 
 	std::vector<EFPoint*> points;
 	FrameHessian* data;  		//EFFrame也持有对应的FrameHessian

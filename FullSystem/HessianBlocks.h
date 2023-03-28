@@ -281,6 +281,7 @@ namespace dso
 		//外部定义 Fullsystem.cpp
 		void makeImages(float *color, CalibHessian *HCalib);
 
+		//获得一个量 用于构造边缘化后先验能量的Hessian矩阵
 		inline Vec10 getPrior()
 		{
 			Vec10 p = Vec10::Zero();
@@ -311,6 +312,7 @@ namespace dso
 			return p;
 		}
 
+		//返回个0  这个在EnergyFunctionalStructs.cpp调用
 		inline Vec10 getPriorZero()
 		{
 			return Vec10::Zero();

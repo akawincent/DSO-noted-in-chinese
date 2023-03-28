@@ -49,17 +49,16 @@ void EFResidual::takeDataF()
 }
 
 
-//获取这个帧state的delta增量
+//将FrameHessian中的state给到EFFrame中的delta量
 void EFFrame::takeData()
 {
 	//这里的data是这个帧的FrameHessian类
+	//prior获取先验量，用于构造涉及边缘化的能量的高斯牛顿近似的Hessian矩阵
 	prior = data->getPrior().head<8>();
-	//获取delta量 = 此刻优化时的增量 - 边缘化时刻的增量
+	//获取delta量 = 此刻优化时的增量和 - 边缘化时刻的增量和
 	delta = data->get_state_minus_stateZero().head<8>();
-	//获取delta先验量 = 此刻优化时的增量 - zero
+	//边缘化时的优化累积起来的增量和
 	delta_prior =  (data->get_state() - data->getPriorZero()).head<8>();
-
-
 
 //	Vec10 state_zero =  data->get_state_zero();
 //	state_zero.segment<3>(0) = SCALE_XI_TRANS * state_zero.segment<3>(0);
@@ -70,8 +69,6 @@ void EFFrame::takeData()
 //	state_zero[9] = SCALE_B * state_zero[9];
 //
 //	std::cout << "state_zero: " << state_zero.transpose() << "\n";
-
-
 	assert(data->frameID != -1);
 	//给个id
 	frameID = data->frameID;

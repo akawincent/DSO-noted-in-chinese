@@ -183,7 +183,9 @@ void EnergyFunctional::setDeltaF(CalibHessian* HCalib)
 		for(int t=0;t<nFrames;t++)
 		{
 			int idx = h+t*nFrames;
-			//把绝对状态变量在tanget space的累积增量(当前累积增量 - 边缘化时固定线性化点处的累积增量)转化到相对状态变量
+			//adHostF = dT21/dT1 = -Ad(T21)^T
+			//adTargetF = dT21/dT2 = I
+			//dT21/dT2 * delta_T2 + dT21/dT1 * delta_T1
 			adHTdeltaF[idx] = frames[h]->data->get_state_minus_stateZero().head<8>().cast<float>().transpose() * adHostF[idx]
 					        +frames[t]->data->get_state_minus_stateZero().head<8>().cast<float>().transpose() * adTargetF[idx];
 		}
@@ -203,8 +205,10 @@ void EnergyFunctional::setDeltaF(CalibHessian* HCalib)
 }
 
 // accumulates & shifts L.
+//accumulateAF_MT遍历每个point
 void EnergyFunctional::accumulateAF_MT(MatXX &H, VecX &b, bool MT)
 {
+	//accSSE_top_A是AccumulatedTopHessianSSE类的实例化对象
 	if(MT)
 	{
 		red->reduce(boost::bind(&AccumulatedTopHessianSSE::setZero, accSSE_top_A, nFrames,  _1, _2, _3, _4), 0, 0, 0);
@@ -216,8 +220,11 @@ void EnergyFunctional::accumulateAF_MT(MatXX &H, VecX &b, bool MT)
 	else
 	{
 		accSSE_top_A->setZero(nFrames);
+		//遍历窗口内每个帧
 		for(EFFrame* f : frames)
+			//遍历所有的点
 			for(EFPoint* p : f->points)
+				//执行addPoint 
 				accSSE_top_A->addPoint<0>(p,this);
 		accSSE_top_A->stitchDoubleMT(red,H,b,this,false,false);
 		resInA = accSSE_top_A->nres[0];
@@ -227,6 +234,7 @@ void EnergyFunctional::accumulateAF_MT(MatXX &H, VecX &b, bool MT)
 // accumulates & shifts L.
 void EnergyFunctional::accumulateLF_MT(MatXX &H, VecX &b, bool MT)
 {
+	
 	if(MT)
 	{
 		red->reduce(boost::bind(&AccumulatedTopHessianSSE::setZero, accSSE_top_L, nFrames,  _1, _2, _3, _4), 0, 0, 0);
@@ -790,7 +798,7 @@ void EnergyFunctional::orthogonalize(VecX* b, MatXX* H)
 
 }
 
-
+/*************************** 终于进入正式的求解过程了 *******************************/
 void EnergyFunctional::solveSystemF(int iteration, double lambda, CalibHessian* HCalib)
 {
 	if(setting_solverMode & SOLVER_USE_GN) lambda=0;
@@ -800,6 +808,7 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, CalibHessian* 
 	assert(EFAdjointsValid);
 	assert(EFIndicesValid);
 
+	//构建增量方程的H和b 以及SC之后的矩阵
 	MatXX HL_top, HA_top, H_sc;
 	VecX  bL_top, bA_top, bM_top, b_sc;
 
@@ -815,9 +824,6 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, CalibHessian* 
 
 
 	bM_top = (bM+ HM * getStitchedDeltaF());
-
-
-
 
 
 
@@ -927,9 +933,9 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, CalibHessian* 
 	currentLambda= lambda;
 	resubstituteF_MT(x, HCalib,multiThreading);
 	currentLambda=0;
-
-
 }
+
+
 void EnergyFunctional::makeIDX()
 {
 	for(unsigned int idx=0;idx<frames.size();idx++)

@@ -145,7 +145,7 @@ private:
 	void calcLEnergyPt(int min, int max, Vec10* stats, int tid);
 
 	void orthogonalize(VecX* b, MatXX* H);
-	//将相对姿态变换的增量转换到绝对姿态变换的增量 delta_T1 + delta_T2
+	//将绝对姿态变换的增量转换到相对姿态变换的增量  
 	Mat18f* adHTdeltaF;
 
 	//向量空间的矩阵伴随

@@ -119,6 +119,8 @@ public:
 		}
 		else
 		{
+			//这里的H和b分别是 68*68 和 68*1 是Hxx 和 Jx * r
+			//窗口数量*8 + 4个相机参数
 			H = MatXX::Zero(nframes[0]*8+CPARS, nframes[0]*8+CPARS);
 			b = VecX::Zero(nframes[0]*8+CPARS);
 			stitchDoubleInternal(&H, &b, EF,0,nframes[0]*nframes[0],0,-1);

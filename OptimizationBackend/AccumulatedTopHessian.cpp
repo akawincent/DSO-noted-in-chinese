@@ -35,21 +35,21 @@ namespace dso
 {
 
 
-
+// 0 = active, 1 = linearized, 2 = marginalize
 template<int mode>
-void AccumulatedTopHessianSSE::addPoint(EFPoint* p, EnergyFunctional const * const ef, int tid)	// 0 = active, 1 = linearized, 2=marginalize
+void AccumulatedTopHessianSSE::addPoint(EFPoint* p, EnergyFunctional const * const ef, int tid)	
 {
-
-
 	assert(mode==0 || mode==1 || mode==2);
 
 	VecCf dc = ef->cDeltaF;
 	float dd = p->deltaF;
-
+	
+	//一些累加量
 	float bd_acc=0;
 	float Hdd_acc=0;
 	VecCf  Hcd_acc = VecCf::Zero();
 
+	//遍历这个point所涉及的所有residual
 	for(EFResidual* r : p->residualsAll)
 	{
 		if(mode==0)
@@ -66,26 +66,31 @@ void AccumulatedTopHessianSSE::addPoint(EFPoint* p, EnergyFunctional const * con
 			assert(r->isLinearized);
 		}
 
-
+		//取出这个残差对应的雅可比矩阵   这些在linearize中计算过了并赋给了J
 		RawResidualJacobian* rJ = r->J;
+		//这个序号表示着是第几个host与第几个targe的相互关系
 		int htIDX = r->hostIDX + r->targetIDX*nframes[tid];
+		//取出来这两帧对应的adHTdeltaF
 		Mat18f dp = ef->adHTdeltaF[htIDX];
 
-
-
+		//残差r
 		VecNRf resApprox;
-		if(mode==0)
-			resApprox = rJ->resF;
-		if(mode==2)
+		if(mode==0)			// active
+			resApprox = rJ->resF;	//直接就是resF
+		if(mode==2)			// marginalize
 			resApprox = r->res_toZeroF;
-		if(mode==1)
+		if(mode==1)			// linearized
 		{
 			// compute Jp*delta
+			//Jp_delta 计算出了两个绝对位姿T1 T2 相机位姿 以及主导帧深度p1的增量对x2产生的增量
 			__m128 Jp_delta_x = _mm_set1_ps(rJ->Jpdxi[0].dot(dp.head<6>())+rJ->Jpdc[0].dot(dc)+rJ->Jpdd[0]*dd);
 			__m128 Jp_delta_y = _mm_set1_ps(rJ->Jpdxi[1].dot(dp.head<6>())+rJ->Jpdc[1].dot(dc)+rJ->Jpdd[1]*dd);
+			//delta 则是计算出了两个绝对光度参数 a b增量 对相对光度ab产生的增量
 			__m128 delta_a = _mm_set1_ps((float)(dp[6]));
 			__m128 delta_b = _mm_set1_ps((float)(dp[7]));
 
+			//最终rtz计算出了所有绝对状态量产生的增量对残差r产生的增量  
+			//resApprox = rtz + res_toZeroF  ; rtz = res_toZeroF
 			for(int i=0;i<patternNum;i+=4)
 			{
 				// PATTERN: rtz = resF - [JI*Jp Ja]*delta.
@@ -104,6 +109,7 @@ void AccumulatedTopHessianSSE::addPoint(EFPoint* p, EnergyFunctional const * con
 		float rr=0;
 		for(int i=0;i<patternNum;i++)
 		{
+			// JI_r = (dr21/dx2)^T * r21
 			JI_r[0] += resApprox[i] *rJ->JIdx[0][i];
 			JI_r[1] += resApprox[i] *rJ->JIdx[1][i];
 			Jab_r[0] += resApprox[i] *rJ->JabF[0][i];
@@ -111,7 +117,11 @@ void AccumulatedTopHessianSSE::addPoint(EFPoint* p, EnergyFunctional const * con
 			rr += resApprox[i]*resApprox[i];
 		}
 
-
+		// 这里的acc保存了这一个residual联系的host帧和target帧的信息  这并不是整个优化的H矩阵
+		//滑动窗口中存在着8 * 8 = 64个acc
+		// acc = [ J  r ]^T * [ J  r ]   
+		// J = [ dr21/dC(8x4)  dr21/dT21(8x6)  dr21/dl(8x2) ]
+		// r = r21  这里的r是8x1的
 		acc[tid][htIDX].update(
 				rJ->Jpdc[0].data(), rJ->Jpdxi[0].data(),
 				rJ->Jpdc[1].data(), rJ->Jpdxi[1].data(),
@@ -128,29 +138,37 @@ void AccumulatedTopHessianSSE::addPoint(EFPoint* p, EnergyFunctional const * con
 				rJ->JabJIdx(1,0), rJ->JabJIdx(1,1),
 				JI_r[0], JI_r[1]);
 
-
+		// Ji2_Jpdd = (dr21/dx2)^T * dr21/dp1
 		Vec2f Ji2_Jpdd = rJ->JIdx2 * rJ->Jpdd;
+		/************* 这里下面的三个量都是遍历一个点的所有残差累加形成的 **************/
+		// 残差active时,bd_acc = (dr21/dp1) * r21 
+		// 残差marg时,bd_acc = (dr21/dp1) * 所有绝对状态量产生的增量对残差r产生的增量 
 		bd_acc +=  JI_r[0]*rJ->Jpdd[0] + JI_r[1]*rJ->Jpdd[1];
+		// (dr21/dp1)^T * dr21/dp1
 		Hdd_acc += Ji2_Jpdd.dot(rJ->Jpdd);
+		// (dr21/dC)^T * dr21/dp1
 		Hcd_acc += rJ->Jpdc[0]*Ji2_Jpdd[0] + rJ->Jpdc[1]*Ji2_Jpdd[1];
 
 		nres[tid]++;
 	}
-
+	//残差active
 	if(mode==0)
 	{
 		p->Hdd_accAF = Hdd_acc;
 		p->bd_accAF = bd_acc;
 		p->Hcd_accAF = Hcd_acc;
 	}
+	//残差线性化或边缘化
 	if(mode==1 || mode==2)
 	{
 		p->Hdd_accLF = Hdd_acc;
 		p->bd_accLF = bd_acc;
 		p->Hcd_accLF = Hcd_acc;
 	}
+	//残差边缘化
 	if(mode==2)
 	{
+		//AF相关就全是零了
 		p->Hcd_accAF.setZero();
 		p->Hdd_accAF = 0;
 		p->bd_accAF = 0;
@@ -246,9 +264,10 @@ void AccumulatedTopHessianSSE::stitchDoubleInternal(
 	if(tid == -1) { toAggregate = 1; tid = 0; }	// special case: if we dont do multithreading, dont aggregate.
 	if(min==max) return;
 
-
+	//遍历所有的host与target组合
 	for(int k=min;k<max;k++)
 	{
+		//计算索引
 		int h = k%nframes[0];
 		int t = k/nframes[0];
 
@@ -260,6 +279,7 @@ void AccumulatedTopHessianSSE::stitchDoubleInternal(
 
 		MatPCPC accH = MatPCPC::Zero();
 
+		//这里是累加多个线程的结果
 		for(int tid2=0;tid2 < toAggregate;tid2++)
 		{
 			acc[tid2][aidx].finish();
@@ -267,6 +287,8 @@ void AccumulatedTopHessianSSE::stitchDoubleInternal(
 			accH += acc[tid2][aidx].H.cast<double>();
 		}
 
+		//这里的H是Hxx; b是 Jx * r  x代表了窗口内所有的状态量(se(3)和光度参数)
+		//前面计算出来的acc都是误差对相对状态量的导数  需要乘以伴随矩阵变成误差对绝对状态量的导数
 		H[tid].block<8,8>(hIdx, hIdx).noalias() += EF->adHost[aidx] * accH.block<8,8>(CPARS,CPARS) * EF->adHost[aidx].transpose();
 
 		H[tid].block<8,8>(tIdx, tIdx).noalias() += EF->adTarget[aidx] * accH.block<8,8>(CPARS,CPARS) * EF->adTarget[aidx].transpose();

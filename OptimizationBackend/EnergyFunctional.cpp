@@ -185,7 +185,7 @@ void EnergyFunctional::setDeltaF(CalibHessian* HCalib)
 			int idx = h+t*nFrames;
 			//adHostF = dT21/dT1 = -Ad(T21)^T
 			//adTargetF = dT21/dT2 = I
-			//dT21/dT2 * delta_T2 + dT21/dT1 * delta_T1
+			//adHTdeltaF = dT21/dT2 * delta_T2 + dT21/dT1 * delta_T1
 			adHTdeltaF[idx] = frames[h]->data->get_state_minus_stateZero().head<8>().cast<float>().transpose() * adHostF[idx]
 					        +frames[t]->data->get_state_minus_stateZero().head<8>().cast<float>().transpose() * adTargetF[idx];
 		}
@@ -808,51 +808,41 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, CalibHessian* 
 	assert(EFAdjointsValid);
 	assert(EFIndicesValid);
 
-	//构建增量方程的H和b 以及SC之后的矩阵
+	//构建增量方程的H和b 以及SC需要的中间量
 	MatXX HL_top, HA_top, H_sc;
 	VecX  bL_top, bA_top, bM_top, b_sc;
 
+	//计算的是SC之前的H和b矩阵(只与相机位姿和光度参数有关  没有逆深度)
 	accumulateAF_MT(HA_top, bA_top,multiThreading);
-
-
 	accumulateLF_MT(HL_top, bL_top,multiThreading);
 
-
-
+	//这里计算的是舒尔补的中间量矩阵，是和逆深度相关的
 	accumulateSCF_MT(H_sc, b_sc,multiThreading);
 
 
-
+	//边缘化固定线性化点后的能量
 	bM_top = (bM+ HM * getStitchedDeltaF());
 
-
-
-
+	//注意这里的H和b并不是整个增量方程的,而是左下角的一块
+	//H是68x68 b是68x1
 	MatXX HFinal_top;
 	VecX bFinal_top;
 
+	//零空间相关
 	if(setting_solverMode & SOLVER_ORTHOGONALIZE_SYSTEM)
 	{
 		// have a look if prior is there.
 		bool haveFirstFrame = false;
 		for(EFFrame* f : frames) if(f->frameID==0) haveFirstFrame=true;
 
-
-
-
 		MatXX HT_act =  HL_top + HA_top - H_sc;
 		VecX bT_act =   bL_top + bA_top - b_sc;
-
 
 		if(!haveFirstFrame)
 			orthogonalize(&bT_act, &HT_act);
 
 		HFinal_top = HT_act + HM;
 		bFinal_top = bT_act + bM_top;
-
-
-
-
 
 		lastHS = HFinal_top;
 		lastbS = bFinal_top;
@@ -862,24 +852,21 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, CalibHessian* 
 	}
 	else
 	{
-
-
+		//HFinal_top是Hxx
 		HFinal_top = HL_top + HM + HA_top;
+		//bFinal_top是bxx_SC 
 		bFinal_top = bL_top + bM_top + bA_top - b_sc;
-
+		//做一下备份
 		lastHS = HFinal_top - H_sc;
 		lastbS = bFinal_top;
 
+		//这里的HFinal_top则完成了舒尔补,是Hxx_SC
 		for(int i=0;i<8*nFrames+CPARS;i++) HFinal_top(i,i) *= (1+lambda);
 		HFinal_top -= H_sc * (1.0f/(1+lambda));
 	}
 
-
-
-
-
-
 	VecX x;
+	//零空间求解出的增量全部给正交化掉，用SVN
 	if(setting_solverMode & SOLVER_SVD)
 	{
 		VecX SVecI = HFinal_top.diagonal().cwiseSqrt().cwiseInverse();
@@ -914,6 +901,7 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, CalibHessian* 
 	{
 		VecX SVecI = (HFinal_top.diagonal()+VecX::Constant(HFinal_top.cols(), 10)).cwiseSqrt().cwiseInverse();
 		MatXX HFinalScaled = SVecI.asDiagonal() * HFinal_top * SVecI.asDiagonal();
+		//解出来增量
 		x = SVecI.asDiagonal() * HFinalScaled.ldlt().solve(SVecI.asDiagonal() * bFinal_top);//  SVec.asDiagonal() * svd.matrixV() * Ub;
 	}
 
@@ -925,7 +913,7 @@ void EnergyFunctional::solveSystemF(int iteration, double lambda, CalibHessian* 
 		orthogonalize(&x, 0);
 	}
 
-
+	//备份一下增量
 	lastX = x;
 
 

@@ -453,16 +453,15 @@ float FullSystem::optimize(int mnumOptIts)
 
 	//计算所有的activeResidual的误差以及Jacobian  false表示没有固定线性化
 	Vec3 lastEnergy = linearizeAll(false);
+	//所有需要被边缘化的变量所构成的残差能量之和
 	double lastEnergyL = calcLEnergy();
+	//边缘化后留下来的先验能量(注意这里的能量已经变成了线性形式，线性化点已经固定)
 	double lastEnergyM = calcMEnergy();
-
-
-
-
 
 	if(multiThreading)
 		treadReduce.reduce(boost::bind(&FullSystem::applyRes_Reductor, this, true, _1, _2, _3, _4), 0, activeResiduals.size(), 50);
 	else
+		//把之前准备好的用于构建增量方程的量全部apply
 		applyRes_Reductor(true,0,activeResiduals.size(),0,0);
 
 
@@ -475,15 +474,15 @@ float FullSystem::optimize(int mnumOptIts)
 	debugPlotTracking();
 
 
-
-	double lambda = 1e-1;
+	/****************** 开始一次优化中的迭代更新过程 ********************/
+	double lambda = 1e-1;			//又来了 LM的阻尼系数
 	float stepsize=1;
 	VecX previousX = VecX::Constant(CPARS+ 8*frameHessians.size(), NAN);
 	for(int iteration=0;iteration<mnumOptIts;iteration++)
 	{
-		// solve!
+		// backup备份一下当前的状态  以便于回退
 		backupState(iteration!=0);
-		//solveSystemNew(0);
+		//solveSystemNew(0);  解增量方程
 		solveSystem(iteration, lambda);
 		double incDirChange = (1e-20 + previousX.dot(ef->lastX)) / (1e-20 + previousX.norm() * ef->lastX.norm());
 		previousX = ef->lastX;
@@ -499,11 +498,8 @@ float FullSystem::optimize(int mnumOptIts)
 			if(stepsize <0.25) stepsize=0.25;
 		}
 
+		//更新变量  判断一下能不能停止迭代了
 		bool canbreak = doStepFromBackup(stepsize,stepsize,stepsize,stepsize,stepsize);
-
-
-
-
 
 
 
@@ -527,6 +523,7 @@ float FullSystem::optimize(int mnumOptIts)
             printOptRes(newEnergy, newEnergyL, newEnergyM , 0, 0, frameHessians.back()->aff_g2l().a, frameHessians.back()->aff_g2l().b);
         }
 
+		//看看能不能接受这次迭代更新
 		if(setting_forceAceptStep || (newEnergy[0] +  newEnergy[1] +  newEnergyL + newEnergyM <
 				lastEnergy[0] + lastEnergy[1] + lastEnergyL + lastEnergyM))
 		{
@@ -544,6 +541,7 @@ float FullSystem::optimize(int mnumOptIts)
 		}
 		else
 		{
+			//不能接受  就退后一次迭代  再来一次优化
 			loadSateBackup();
 			lastEnergy = linearizeAll(false);
 			lastEnergyL = calcLEnergy();
@@ -555,18 +553,19 @@ float FullSystem::optimize(int mnumOptIts)
 		if(canbreak && iteration >= setting_minOptIterations) break;
 	}
 
-
-
+	//why?
+	//把最新帧的位姿设为线性化点
 	Vec10 newStateZero = Vec10::Zero();
 	newStateZero.segment<2>(6) = frameHessians.back()->get_state().segment<2>(6);
-
 	frameHessians.back()->setEvalPT(frameHessians.back()->PRE_worldToCam,
 			newStateZero);
+
+	//求伴随矩阵以及预先计算值	
 	EFDeltaValid=false;
 	EFAdjointsValid=false;
 	ef->setAdjointsF(&Hcalib);
 	setPrecalcValues();
-
+	//更新之后的能量  这里是fix线性化点了
 	lastEnergy = linearizeAll(true);
 
 	if(!std::isfinite((double)lastEnergy[0]) || !std::isfinite((double)lastEnergy[1]) || !std::isfinite((double)lastEnergy[2]))
@@ -603,12 +602,13 @@ float FullSystem::optimize(int mnumOptIts)
 
 void FullSystem::solveSystem(int iteration, double lambda)
 {
+	//获取状态变量的零空间
 	ef->lastNullspaces_forLogging = getNullspaces(
 			ef->lastNullspaces_pose,
 			ef->lastNullspaces_scale,
 			ef->lastNullspaces_affA,
 			ef->lastNullspaces_affB);
-
+	//Solve!
 	ef->solveSystemF(iteration, lambda,&Hcalib);
 }
 

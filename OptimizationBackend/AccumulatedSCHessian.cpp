@@ -31,6 +31,7 @@
 namespace dso
 {
 
+//针对一个point的
 void AccumulatedSCHessianSSE::addPoint(EFPoint* p, bool shiftPriorToZero, int tid)
 {
 	int ngoodres = 0;
@@ -42,19 +43,26 @@ void AccumulatedSCHessianSSE::addPoint(EFPoint* p, bool shiftPriorToZero, int ti
 		p->data->idepth_hessian=0;
 		p->data->maxRelBaseline=0;
 		return;
-	}
-
+	} 
+	/********这些累加量是在AccumulatedTopHessian中计算完成的*********/
+	//这是一个点的所有残差对应的(dr21/dp1)^T * (dr21/dp1)全部累加
+	//这些累加量是在AccumulatedTopHessian中计算完成的
 	float H = p->Hdd_accAF+p->Hdd_accLF+p->priorF;
 	if(H < 1e-10) H = 1e-10;
 
 	p->data->idepth_hessian=H;
-
 	p->HdiF = 1.0 / H;
+
+	//当前点下所有的(dr21/dp1)^T * r21 的求和
 	p->bdSumF = p->bd_accAF + p->bd_accLF;
 	if(shiftPriorToZero) p->bdSumF += p->priorF*p->deltaF;
+	//当前点下所有的 (dr21/dC)^T *  dr21/dp1 的求和
 	VecCf Hcd = p->Hcd_accAF + p->Hcd_accLF;
-	accHcc[tid].update(Hcd,Hcd,p->HdiF);
-	accbc[tid].update(Hcd, p->bdSumF * p->HdiF);
+
+
+	//accHcc和accbc都是整个优化的累积量  
+	accHcc[tid].update(Hcd,Hcd,p->HdiF);			//这一步加入了当前点的Hcc 
+	accbc[tid].update(Hcd, p->bdSumF * p->HdiF);	//这一步加入了当前点的bc
 
 	assert(std::isfinite((float)(p->HdiF)));
 

@@ -687,6 +687,7 @@ void FullSystem::activatePointsMT()
 
 		if(newpoint != 0 && newpoint != (PointHessian*)((long)(-1)))
 		{
+			//并且将成熟点加入到优化中
 			newpoint->host->immaturePoints[ph->idxInImmaturePoints]=0;
 			newpoint->host->pointHessians.push_back(newpoint);
 			ef->insertPoint(newpoint);
@@ -1085,8 +1086,9 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 		boost::unique_lock<boost::mutex> crlock(shellPoseMutex);
 		assert(fh->shell->trackingRef != 0);
 		//计算fh帧从相机坐标系到世界坐标系的位姿变换(实际上就是fh帧绝对位姿的逆)
+		//这里的位姿是前端得到的
 		fh->shell->camToWorld = fh->shell->trackingRef->camToWorld * fh->shell->camToTrackingRef;
-		//设置状态量
+		//设置状态量和线性化点
 		fh->setEvalPT_scaled(fh->shell->camToWorld.inverse(),fh->shell->aff_g2l);
 	}
 
@@ -1106,9 +1108,11 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 	fh->frameID = allKeyFramesHistory.size();
 	allKeyFramesHistory.push_back(fh->shell);
 	//ef是EnergyFunctional类 向ef中加入fh帧
+	//在这个函数中完成了窗口中所有帧的伴随矩阵求解
 	ef->insertFrame(fh, &Hcalib);
 
 	//计算frameHessian中所有帧之间的距离 相对光度参数以及一些姿态预算计算值
+	//在这个函数中计算了线性化点处固定的相对位姿 以及随着优化增量更新的相对位姿
 	setPrecalcValues();
 
 
@@ -1121,6 +1125,7 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 		{
 			//创建了当前帧fh与之前的帧fh1上point之间形成的残差 fh1为host fh为target ph为host上的激活点
 			//就是把窗口内以前的所有帧上面的激活点都尝试投影到target 形成残差
+			//创建r的同时也准备了后端优化的导数
 			PointFrameResidual* r = new PointFrameResidual(ph, fh1, fh);
 			r->setState(ResState::IN);
 			//point也持有r 放在容器residual下面  一个point可能有多个residual
@@ -1143,11 +1148,8 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 	// =========================== OPTIMIZE ALL =========================
 	//对滑窗内的关键帧进行优化
 	fh->frameEnergyTH = frameHessians.back()->frameEnergyTH;
+	//整个后端优化  返回一个Rmse
 	float rmse = optimize(setting_maxOptIterations);
-
-
-
-
 
 	// =========================== Figure Out if INITIALIZATION FAILED =========================
 	if(allKeyFramesHistory.size() <= 4)
@@ -1169,56 +1171,40 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
 		}
 	}
 
-
-
     if(isLost) return;
-
-
-
 
 	// =========================== REMOVE OUTLIER =========================
 	removeOutliers();
-
-
-
 
 	{
 		boost::unique_lock<boost::mutex> crlock(coarseTrackerSwapMutex);
 		coarseTracker_forNewKF->makeK(&Hcalib);
 		coarseTracker_forNewKF->setCoarseTrackingRef(frameHessians);
 
-
-
         coarseTracker_forNewKF->debugPlotIDepthMap(&minIdJetVisTracker, &maxIdJetVisTracker, outputWrapper);
         coarseTracker_forNewKF->debugPlotIDepthMapFloat(outputWrapper);
 	}
 
-
 	debugPlot("post Optimize");
 
-
-
-
-
-
 	// =========================== (Activate-)Marginalize Points =========================
+	//标记一下哪些点需要被移除
 	flagPointsForRemoval();
+	//把点扔了
 	ef->dropPointsF();
+	//获取零空间
 	getNullspaces(
 			ef->lastNullspaces_pose,
 			ef->lastNullspaces_scale,
 			ef->lastNullspaces_affA,
 			ef->lastNullspaces_affB);
+	//边缘化点
 	ef->marginalizePointsF();
 
 
-
 	// =========================== add new Immature points & new residuals =========================
+	//会重新选一些未成熟点
 	makeNewTraces(fh, 0);
-
-
-
-
 
     for(IOWrap::Output3DWrapper* ow : outputWrapper)
     {
@@ -1227,18 +1213,15 @@ void FullSystem::makeKeyFrame( FrameHessian* fh)
     }
 
 
-
 	// =========================== Marginalize Frames =========================
-
+	
+	//边缘化帧  之前标记过了
 	for(unsigned int i=0;i<frameHessians.size();i++)
 		if(frameHessians[i]->flaggedForMarginalization)
 			{marginalizeFrame(frameHessians[i]); i=0;}
 
-
-
 	printLogLine();
     //printEigenValLine();
-
 }
 
 /*************************** DSO系统的初始化操作 **************************/
